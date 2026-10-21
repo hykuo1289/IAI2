@@ -1,0 +1,2457 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>抗生素塔防：腸道保衛戰 (Antibiotic 3D Tower Defense)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PlayCanvas 3D Engine -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/playcanvas/1.68.0/playcanvas.min.js"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        
+        * {
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            box-sizing: border-box;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a0b12;
+            font-family: 'Noto Sans TC', sans-serif;
+            touch-action: none;
+        }
+        #application-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        /* Floating 2D Overlay for 3D Entities */
+        #world-ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 10;
+        }
+        .entity-label {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            white-space: nowrap;
+            pointer-events: none;
+            transition: opacity 0.15s;
+        }
+        .dmg-popup {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            font-weight: 900;
+            font-size: 14px;
+            pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.85);
+            animation: floatUp 0.75s ease-out forwards;
+        }
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translate(-50%, 0) scale(0.8); }
+            30% { transform: translate(-50%, -15px) scale(1.15); }
+            100% { opacity: 0; transform: translate(-50%, -38px) scale(0.9); }
+        }
+        /* Custom Scrollbar for Modals */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.35); border-radius: 4px; }
+        
+        /* Game Buttons Styling */
+        .game-btn {
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 0 rgba(0,0,0,0.4), 0 6px 12px rgba(0,0,0,0.35);
+        }
+        .game-btn:active:not(:disabled) {
+            transform: translateY(3px);
+            box-shadow: 0 1px 0 rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .game-btn:disabled {
+            opacity: 0.45;
+            filter: grayscale(0.6);
+            cursor: not-allowed;
+        }
+        /* Virtual Joystick Ring */
+        #joystick-zone {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 15;
+        }
+        #joystick-base {
+            position: absolute;
+            width: 110px;
+            height: 110px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, rgba(0,0,0,0.25) 100%);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+            z-index: 16;
+        }
+        #joystick-stick {
+            position: absolute;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #34d399 0%, #059669 100%);
+            box-shadow: 0 0 12px rgba(52, 211, 153, 0.8);
+            border: 2px solid #fff;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+            z-index: 17;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- PlayCanvas 3D Render Canvas -->
+    <canvas id="application-canvas"></canvas>
+
+    <!-- 3D to 2D World Floating Labels & HP Bars Container -->
+    <div id="world-ui-container"></div>
+
+    <!-- Touch / Slide Movement Zone -->
+    <div id="joystick-zone"></div>
+    <div id="joystick-base"></div>
+    <div id="joystick-stick"></div>
+
+    <!-- Top HUD Bar -->
+    <div class="fixed top-0 left-0 right-0 z-30 p-2 sm:p-3 pointer-events-none flex flex-wrap items-center justify-between gap-2">
+        <!-- Left Info: Level, Wave Progress, Castle HP -->
+        <div class="flex items-center gap-2 sm:gap-3 bg-slate-900/85 backdrop-blur-md border border-rose-500/40 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl pointer-events-auto shadow-lg">
+            <div class="flex flex-col">
+                <span class="text-[10px] sm:text-xs text-rose-300 font-bold tracking-wider">STAGE 關卡</span>
+                <span id="hud-level" class="text-base sm:text-xl font-black text-white leading-tight">第 1 關</span>
+            </div>
+            <div class="h-7 w-[1px] bg-slate-700"></div>
+            <div class="flex flex-col">
+                <span class="text-[10px] sm:text-xs text-amber-300 font-bold">剩餘細菌</span>
+                <span id="hud-enemies" class="text-sm sm:text-lg font-extrabold text-amber-400 leading-tight">10 隻</span>
+            </div>
+            <div class="h-7 w-[1px] bg-slate-700"></div>
+            <div class="flex flex-col">
+                <span class="text-[10px] sm:text-xs text-cyan-300 font-bold">累積擊殺</span>
+                <span id="hud-kills" class="text-sm sm:text-lg font-extrabold text-cyan-400 leading-tight">0 隻</span>
+            </div>
+            <div class="h-7 w-[1px] bg-slate-700"></div>
+            <div class="flex flex-col">
+                <span class="text-[10px] sm:text-xs text-emerald-300 font-bold">終點城堡生命</span>
+                <div id="hud-castle-hearts" class="flex items-center gap-1 text-rose-500 text-xs sm:text-base mt-0.5">
+                    <i class="fa-solid fa-heart"></i>
+                    <i class="fa-solid fa-heart"></i>
+                    <i class="fa-solid fa-heart"></i>
+                    <i class="fa-solid fa-heart"></i>
+                    <i class="fa-solid fa-heart"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Info: Gold, Player Status, Guide & Audio Buttons -->
+        <div class="flex items-center gap-2 pointer-events-auto">
+            <!-- Gold Counter -->
+            <div class="bg-slate-900/90 backdrop-blur-md border border-yellow-500/50 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl flex items-center gap-2 shadow-lg">
+                <div class="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-yellow-300 to-amber-600 flex items-center justify-center text-slate-950 font-black text-xs sm:text-sm shadow">
+                    $
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[10px] text-yellow-200/80 font-bold leading-none">GOLD 金幣</span>
+                    <span id="hud-gold" class="text-base sm:text-xl font-black text-yellow-400 leading-tight">5</span>
+                </div>
+            </div>
+
+            <!-- Antibiotic Spectrum Reference Button -->
+            <button id="btn-open-guide" class="game-btn bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-2 sm:px-3.5 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-indigo-400/50">
+                <i class="fa-solid fa-book-medical"></i>
+                <span class="hidden md:inline">抗菌圖鑑</span>
+            </button>
+
+            <!-- Audio Toggle Button -->
+            <button id="btn-toggle-audio" class="game-btn bg-slate-800 hover:bg-slate-700 text-emerald-400 px-2.5 py-2 sm:px-3 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm border border-slate-600">
+                <i id="icon-audio" class="fa-solid fa-volume-high"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Top Center Toast / Wave Banner -->
+    <div id="wave-banner" class="fixed top-16 sm:top-20 left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-300 opacity-0 scale-90">
+        <div class="bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-rose-950/90 border border-rose-400/50 px-5 py-2 rounded-full shadow-2xl text-center">
+            <span id="wave-banner-text" class="text-xs sm:text-sm font-bold text-rose-200 tracking-wide"></span>
+        </div>
+    </div>
+
+    <!-- Bottom Left Real-Time Tactical Minimap & Controls Hint -->
+    <div id="minimap-container" class="fixed bottom-3 left-3 z-20 pointer-events-none flex flex-col gap-1.5">
+        <div class="bg-slate-950/85 backdrop-blur-md border-2 border-rose-500/50 rounded-2xl p-2 shadow-2xl">
+            <div class="flex items-center justify-between text-[10px] font-bold text-slate-300 mb-1 px-0.5">
+                <span class="text-rose-300 flex items-center gap-1">
+                    <i class="fa-solid fa-map-location-dot text-rose-400"></i> 腸道戰術小地圖
+                </span>
+                <span class="text-[9px] text-slate-400">綠:醫師 | 藍:衛兵 | 彩:細菌</span>
+            </div>
+            <canvas id="minimap-canvas" width="184" height="130" class="w-[150px] h-[106px] sm:w-[196px] sm:h-[138px] rounded-xl border border-white/15 block bg-[#1f0810]"></canvas>
+        </div>
+        <div class="hidden sm:flex flex-col gap-0.5 bg-slate-900/75 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-white/10 text-[11px] text-slate-300">
+            <div>電腦：<span class="text-white font-semibold">WASD</span> 移動 | 手機：<span class="text-white font-semibold">滑動螢幕</span>移動</div>
+            <div>站在<span class="text-cyan-300 font-semibold">圓圈點位</span>可於右下角配置或升級衛兵</div>
+        </div>
+    </div>
+
+    <!-- Bottom Right Interactive Action & Build Menu (For Right-Hand Thumb / Mouse Click) -->
+    <div class="fixed bottom-3 right-3 z-30 flex flex-col items-end gap-2 max-w-[92vw] sm:max-w-md pointer-events-none">
+        
+        <!-- Contextual Defense Node Menu (Shows when standing on a node) -->
+        <div id="node-menu-panel" class="hidden pointer-events-auto bg-slate-900/95 backdrop-blur-md border-2 border-cyan-400/70 rounded-2xl p-2.5 sm:p-3 shadow-2xl w-full transition-all">
+            <div class="flex items-center justify-between mb-2 pb-1 border-b border-slate-700/80">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+                    <span id="node-menu-title" class="text-xs sm:text-sm font-black text-cyan-300">防禦點位 #1 - 選擇部署</span>
+                </div>
+                <span class="text-[10px] text-slate-400">站在圈內操作</span>
+            </div>
+            <div id="node-menu-buttons" class="grid grid-cols-2 gap-2">
+                <!-- Populated dynamically via JS -->
+            </div>
+        </div>
+
+        <!-- Always-Available Surgeon Player Evolution Button -->
+        <div class="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-emerald-500/50 rounded-2xl p-2 sm:p-2.5 shadow-xl flex items-center gap-2.5">
+            <div class="flex flex-col text-right">
+                <span class="text-[10px] text-emerald-300 font-bold">目前外科醫師狀態</span>
+                <span id="player-status-name" class="text-xs sm:text-sm font-black text-white">Tazocin (0.62s/刀)</span>
+            </div>
+            <button id="btn-evolve-player" class="game-btn bg-gradient-to-b from-emerald-500 to-teal-700 hover:from-emerald-400 hover:to-teal-600 text-white px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm border border-emerald-300/60 flex items-center gap-1.5">
+                <i class="fa-solid fa-dna"></i>
+                <div class="flex flex-col items-start leading-tight">
+                    <span id="evolve-btn-title">進化：騎虎 Tygecycline</span>
+                    <span id="evolve-btn-cost" class="text-[10px] text-yellow-300 font-extrabold">費用: 5 金幣</span>
+                </div>
+            </button>
+        </div>
+    </div>
+
+    <!-- Antibiotic Spectrum & Enemy Guide Modal -->
+    <div id="modal-guide" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-6">
+        <div class="bg-slate-900 border-2 border-indigo-500/60 rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="flex items-center justify-between px-5 py-3.5 bg-indigo-950/70 border-b border-indigo-500/30">
+                <h2 class="text-base sm:text-xl font-black text-white flex items-center gap-2">
+                    <i class="fa-solid fa-microscope text-indigo-400"></i>
+                    抗生素殺傷力圖鑑 & 細菌特徵 (生命值皆為 100)
+                </h2>
+                <button id="btn-close-guide" class="text-slate-300 hover:text-white bg-slate-800 hover:bg-rose-600 w-8 h-8 rounded-full font-bold transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs sm:text-sm text-slate-200">
+                <p class="text-amber-300 font-semibold">
+                    <i class="fa-solid fa-circle-info mr-1"></i>
+                    注意：我方外科醫師與防禦人員「只會瞄準並攻擊自己能夠造成傷害的細菌」！射程皆為畫面寬度的 1/3。（全體攻速已調降 20%）
+                </p>
+                <!-- Damage Table -->
+                <div class="overflow-x-auto rounded-xl border border-slate-700">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-800 text-slate-200 text-[11px] sm:text-xs">
+                                <th class="p-2 border-b border-slate-700">單位 / 抗生素</th>
+                                <th class="p-2 border-b border-slate-700 text-red-400">腸桿菌<br><span class="text-[10px] text-slate-400">紅香腸</span></th>
+                                <th class="p-2 border-b border-slate-700 text-slate-300">ESBL腸桿菌<br><span class="text-[10px] text-slate-400">紅香腸+大銀盾</span></th>
+                                <th class="p-2 border-b border-slate-700 text-yellow-400">CRE腸桿菌<br><span class="text-[10px] text-slate-400">紅香腸+大金盾</span></th>
+                                <th class="p-2 border-b border-slate-700 text-purple-300">腸球菌<br><span class="text-[10px] text-slate-400">黑球長鏈</span></th>
+                                <th class="p-2 border-b border-slate-700 text-emerald-400">綠膿桿菌<br><span class="text-[10px] text-slate-400">綠色長棒</span></th>
+                                <th class="p-2 border-b border-slate-700 text-stone-400">厭氧菌<br><span class="text-[10px] text-slate-400">黑色棒狀</span></th>
+                                <th class="p-2 border-b border-slate-700 text-white">念珠菌<br><span class="text-[10px] text-slate-400">白球聚團</span></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 text-xs">
+                            <tr class="bg-emerald-950/30">
+                                <td class="p-2 font-bold text-emerald-400">Tazocin (玩家初始)<br><span class="text-[10px] text-slate-400">手術刀 / 0.625秒</span></td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 text-slate-600">-</td>
+                            </tr>
+                            <tr class="bg-amber-950/30">
+                                <td class="p-2 font-bold text-amber-400">Tygecycline (玩家進化)<br><span class="text-[10px] text-slate-400">騎老虎 / 0.625s→0.375s</span></td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 font-bold text-cyan-300">40</td>
+                                <td class="p-2 font-bold text-yellow-300">25</td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 text-slate-600">-</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2 font-bold text-sky-400">Ertapenem (5金)<br><span class="text-[10px] text-slate-400">棒球少年 / 1.25秒</span></td>
+                                <td class="p-2 font-bold text-white">55</td>
+                                <td class="p-2 font-bold text-cyan-300">60</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-white">35</td>
+                                <td class="p-2 text-slate-600">-</td>
+                            </tr>
+                            <tr class="bg-blue-950/30">
+                                <td class="p-2 font-bold text-blue-400">Meropenem (升級10金)<br><span class="text-[10px] text-slate-400">消防員水柱 / 攻速-20%</span></td>
+                                <td class="p-2 font-bold text-white">80/s</td>
+                                <td class="p-2 font-bold text-cyan-300">64/s</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-emerald-300">56/s</td>
+                                <td class="p-2 font-bold text-white">44/s</td>
+                                <td class="p-2 text-slate-600">-</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2 font-bold text-teal-400">Ciprofloxacin (5金)<br><span class="text-[10px] text-slate-400">弓箭少女 / 1.25秒</span></td>
+                                <td class="p-2 font-bold text-white">100</td>
+                                <td class="p-2 font-bold text-cyan-300">25</td>
+                                <td class="p-2 font-bold text-yellow-300">10</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-emerald-300">100</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2 font-bold text-purple-400">Zavicefta (15金)<br><span class="text-[10px] text-slate-400">黑衣白膚狙擊女僕 / 3.75秒</span></td>
+                                <td class="p-2 font-bold text-white">100</td>
+                                <td class="p-2 font-bold text-cyan-300">100</td>
+                                <td class="p-2 font-bold text-yellow-300">100</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-emerald-300">50</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2 font-bold text-rose-400">Erasix (10金)<br><span class="text-[10px] text-slate-400">紅袍女法師 / 2.5秒</span></td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 text-slate-600">-</td>
+                                <td class="p-2 font-bold text-rose-300">100</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-slate-800/70 p-3 rounded-xl">
+                    <div><span class="text-yellow-400 font-bold">過關規則：</span>過關後場地防禦清空、玩家進化重置為 Tazocin；金幣保留一半至下一關（上限最多保留 40 金）。</div>
+                    <div><span class="text-cyan-400 font-bold">點位強化：</span>站在已部署的防禦點位上，可選擇「升級 Meropenem (10金)」、「+1 增援同型角色 (15金)」或「拆除回收 (+3金)」。</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start / Stage Clear / Game Over Modal Overlay -->
+    <div id="modal-screen" class="fixed inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-emerald-500/60 rounded-3xl max-w-lg w-full p-6 text-center shadow-2xl space-y-4">
+            <div id="modal-badge" class="inline-block px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-extrabold">
+                3D MEDICAL TOWER DEFENSE
+            </div>
+            <h1 id="modal-title" class="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                抗生素塔防：腸道保衛戰
+            </h1>
+            <p id="modal-desc" class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                扮演身穿綠色手術衣的外科醫師 <span class="text-emerald-400 font-bold">Tazocin</span>，在彎曲的大腸皺摺路徑中攔截擬人化細菌大軍！<br>
+                阻止 5 隻細菌攻破終點城堡，善用不同抗生素對抗抗藥性細菌！
+            </p>
+            <!-- Kill Count Summary Banner (Shown on Stage Clear & Game Over) -->
+            <div id="modal-kill-summary" class="hidden bg-gradient-to-r from-rose-950/90 via-slate-900 to-rose-950/90 border border-rose-400/50 rounded-2xl p-3 text-center shadow-inner">
+                <div class="text-xs text-rose-200 font-bold">本次戰役總共消滅細菌數量</div>
+                <div class="text-2xl sm:text-3xl font-black text-yellow-400 mt-0.5">
+                    <span id="modal-total-kills">0</span> <span class="text-sm text-white font-bold">隻細菌</span>
+                </div>
+                <div id="modal-stage-kills" class="text-[11px] text-slate-300 mt-0.5"></div>
+            </div>
+            <div id="modal-stage-info" class="bg-slate-800/90 border border-slate-700 rounded-2xl p-3.5 text-left text-xs space-y-1.5">
+                <div class="font-bold text-amber-300"><i class="fa-solid fa-virus mr-1"></i> 第 1 關敵軍情報：</div>
+                <div id="modal-enemy-list" class="text-slate-200">腸桿菌 (紅香腸) x 10</div>
+                <div class="font-bold text-cyan-300 pt-1"><i class="fa-solid fa-shield-halved mr-1"></i> 本關可用防禦：</div>
+                <div id="modal-tower-list" class="text-slate-200">第 1 關僅能進化外科醫師角色（不可放置防禦人員）</div>
+            </div>
+            <div class="pt-2 flex justify-center gap-3">
+                <button id="btn-start-stage" class="game-btn bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black px-8 py-3.5 rounded-2xl text-base sm:text-lg shadow-xl border border-emerald-300/50">
+                    <i class="fa-solid fa-play mr-1.5"></i> 開始作戰
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    /*************************************************************************
+     * 1. WEB AUDIO SYNTHESIZER (Procedural BGM & Sound Effects - Zero External Assets)
+     *************************************************************************/
+    class SoundSystem {
+        constructor() {
+            this.ctx = null;
+            this.muted = false;
+            this.bgmPlaying = false;
+            this.bgmStep = 0;
+            this.bgmTimer = null;
+        }
+        init() {
+            if (!this.ctx) {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (AudioCtx) this.ctx = new AudioCtx();
+            }
+            if (this.ctx && this.ctx.state === 'suspended') {
+                this.ctx.resume();
+            }
+        }
+        toggleMute() {
+            this.muted = !this.muted;
+            return this.muted;
+        }
+        playTone(freq, type, duration, vol = 0.12, slideFreq = null) {
+            if (this.muted || !this.ctx) return;
+            try {
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                if (slideFreq) {
+                    osc.frequency.exponentialRampToValueAtTime(slideFreq, this.ctx.currentTime + duration);
+                }
+                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + duration);
+            } catch (e) {}
+        }
+        playScalpel() { this.playTone(900, 'triangle', 0.09, 0.08, 350); }
+        playBaseball() { this.playTone(280, 'sine', 0.11, 0.12, 120); }
+        playArrow() { this.playTone(620, 'sine', 0.1, 0.08, 980); }
+        playSniper() {
+            this.playTone(150, 'sawtooth', 0.28, 0.18, 45);
+            this.playTone(800, 'square', 0.08, 0.1, 200);
+        }
+        playFireball() { this.playTone(220, 'sawtooth', 0.32, 0.14, 65); }
+        playKillCoin() {
+            this.playTone(987.77, 'sine', 0.08, 0.1);
+            setTimeout(() => this.playTone(1318.51, 'sine', 0.15, 0.12), 60);
+        }
+        playUpgrade() {
+            [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => {
+                setTimeout(() => this.playTone(f, 'triangle', 0.14, 0.12), idx * 70);
+            });
+        }
+        playCastleHit() {
+            this.playTone(110, 'sawtooth', 0.4, 0.22, 40);
+        }
+        startBGM() {
+            this.init();
+            if (this.bgmPlaying) return;
+            this.bgmPlaying = true;
+            // Energetic chiptune medical defense melody
+            const bassline = [110, 110, 130.81, 146.83, 110, 110, 164.81, 146.83];
+            const melody = [440, 0, 523.25, 659.25, 587.33, 523.25, 440, 392, 440, 0, 659.25, 783.99, 880, 783.99, 659.25, 587.33];
+            this.bgmTimer = setInterval(() => {
+                if (this.muted || !this.ctx) return;
+                const bNote = bassline[Math.floor(this.bgmStep / 2) % bassline.length];
+                const mNote = melody[this.bgmStep % melody.length];
+                if (this.bgmStep % 2 === 0) {
+                    this.playTone(bNote, 'triangle', 0.18, 0.045);
+                }
+                if (mNote > 0) {
+                    this.playTone(mNote, 'sine', 0.14, 0.035);
+                }
+                this.bgmStep++;
+            }, 210);
+        }
+    }
+    const sfx = new SoundSystem();
+
+    /*************************************************************************
+     * 2. ANTIBIOTIC DAMAGE MATRIX & STAGE CONFIGURATION
+     *************************************************************************/
+    // Bacteria Types:
+    // 'entero'      : 1. 腸桿菌 (Red sausage)
+    // 'enterococcus': 2. 腸球菌 (Black sphere chain)
+    // 'pseudo'      : 3. 綠膿桿菌 (Green long rod)
+    // 'anaerobe'    : 4. 厭氧菌 (Black rod)
+    // 'esbl'        : 5. ESBL 腸桿菌 (Red sausage + Silver shield)
+    // 'cre'         : 6. CRE 腸桿菌 (Red sausage + Gold shield)
+    // 'candida'     : 7. 念珠菌 (White sphere cluster)
+
+    const BACTERIA_INFO = {
+        entero:       { name: '腸桿菌',       color: '#ef4444' },
+        enterococcus: { name: '腸球菌',       color: '#a855f7' },
+        pseudo:       { name: '綠膿桿菌',     color: '#22c55e' },
+        anaerobe:     { name: '厭氧菌',       color: '#78716c' },
+        esbl:         { name: 'ESBL 腸桿菌',  color: '#cbd5e1' },
+        cre:          { name: 'CRE 腸桿菌',   color: '#facc15' },
+        candida:      { name: '念珠菌',       color: '#f8fafc' }
+    };
+
+    // Exact Damage Table per User Specification
+    const DAMAGE_MATRIX = {
+        Tazocin: {
+            entero: 55, enterococcus: 55, pseudo: 55, anaerobe: 55,
+            esbl: 0, cre: 0, candida: 0
+        },
+        Tygecycline: {
+            entero: 55, esbl: 40, cre: 25, enterococcus: 55, anaerobe: 55,
+            pseudo: 0, candida: 0
+        },
+        Ertapenem: {
+            entero: 55, esbl: 60, anaerobe: 35,
+            cre: 0, enterococcus: 0, pseudo: 0, candida: 0
+        },
+        Meropenem: { // DPS (Damage per second via continuous water hose)
+            entero: 100, esbl: 80, anaerobe: 55, pseudo: 70,
+            cre: 0, enterococcus: 0, candida: 0
+        },
+        Ciprofloxacin: {
+            entero: 100, esbl: 25, cre: 10, pseudo: 100,
+            enterococcus: 0, anaerobe: 0, candida: 0
+        },
+        Zavicefta: {
+            entero: 100, esbl: 100, cre: 100, pseudo: 50,
+            enterococcus: 0, anaerobe: 0, candida: 0
+        },
+        Erasix: {
+            candida: 100,
+            entero: 0, esbl: 0, cre: 0, enterococcus: 0, pseudo: 0, anaerobe: 0
+        }
+    };
+
+    // Attack speeds slowed down by 20% (intervals multiplied by 1.25; Meropenem continuous stream rate * 0.8)
+    const TOWER_SPECS = {
+        Ertapenem:     { name: 'Ertapenem',     desc: '棒球少年 (1.25秒/球)', cost: 5,  interval: 1.25, isBeam: false, color: '#38bdf8' },
+        Meropenem:     { name: 'Meropenem',     desc: '消防員水柱 (連續噴射)', cost: 10, interval: 0.0,  isBeam: true,  color: '#3b82f6' },
+        Ciprofloxacin: { name: 'Ciprofloxacin', desc: '弓箭少女 (1.25秒/箭)', cost: 5,  interval: 1.25, isBeam: false, color: '#2dd4bf' },
+        Zavicefta:     { name: 'Zavicefta',     desc: '狙擊女僕 (3.75秒/發)', cost: 15, interval: 3.75, isBeam: false, color: '#c084fc' },
+        Erasix:        { name: 'Erasix',        desc: '紅袍法師 (2.5秒/火球)', cost: 10, interval: 2.5,  isBeam: false, color: '#fb7185' }
+    };
+
+    function getLevelConfig(level) {
+        let counts = {};
+        let allowed = [];
+        let canUpgradeMero = false;
+        let speedMultiplier = 1.0;
+
+        if (level === 1) {
+            counts = { entero: 10 };
+            allowed = [];
+            canUpgradeMero = false;
+        } else if (level === 2) {
+            counts = { entero: 20, esbl: 10 };
+            allowed = ['Ertapenem'];
+            canUpgradeMero = false;
+        } else if (level === 3) {
+            counts = { entero: 20, esbl: 20, pseudo: 10 };
+            allowed = ['Ertapenem', 'Ciprofloxacin'];
+            canUpgradeMero = true;
+        } else if (level === 4) {
+            counts = { entero: 30, esbl: 30, cre: 20, enterococcus: 10, pseudo: 10 };
+            allowed = ['Ertapenem', 'Ciprofloxacin', 'Zavicefta'];
+            canUpgradeMero = true;
+        } else if (level === 5) {
+            counts = { entero: 30, esbl: 30, cre: 30, anaerobe: 10 };
+            allowed = ['Ertapenem', 'Ciprofloxacin', 'Zavicefta'];
+            canUpgradeMero = true;
+        } else if (level === 6) {
+            counts = { entero: 40, esbl: 30, cre: 30, candida: 20 };
+            allowed = ['Ertapenem', 'Ciprofloxacin', 'Zavicefta', 'Erasix'];
+            canUpgradeMero = true;
+        } else {
+            // Level 7+: Total 200-300 randomized, and distribution across all 7 bacteria types is randomized
+            const totalTarget = Math.floor(Math.random() * 101) + 200; // 200 to 300 inclusive
+            const types = ['entero', 'esbl', 'cre', 'enterococcus', 'pseudo', 'anaerobe', 'candida'];
+            counts = {
+                entero: 1, esbl: 1, cre: 1, enterococcus: 1, pseudo: 1, anaerobe: 1, candida: 1
+            };
+            // Generate random weights for each bacterium type so every stage has a unique random composition
+            const weights = types.map(() => Math.random() + 0.15);
+            const weightSum = weights.reduce((a, b) => a + b, 0);
+            let remaining = totalTarget - types.length;
+
+            for (let i = 0; i < types.length; i++) {
+                if (i === types.length - 1) {
+                    counts[types[i]] += remaining;
+                } else {
+                    const share = Math.round((weights[i] / weightSum) * (totalTarget - types.length));
+                    const clampedShare = Math.max(0, Math.min(remaining, share));
+                    counts[types[i]] += clampedShare;
+                    remaining -= clampedShare;
+                }
+            }
+
+            allowed = ['Ertapenem', 'Ciprofloxacin', 'Zavicefta', 'Erasix'];
+            canUpgradeMero = true;
+            // Level 7 is +5%, and each subsequent level increases by another 5% cumulatively
+            speedMultiplier = Math.pow(1.05, level - 6);
+        }
+
+        // Build randomized mixed spawn queue
+        const queue = [];
+        Object.keys(counts).forEach(type => {
+            for (let i = 0; i < counts[type]; i++) queue.push(type);
+        });
+        for (let i = queue.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [queue[i], queue[j]] = [queue[j], queue[i]];
+        }
+
+        return { counts, queue, allowed, canUpgradeMero, speedMultiplier };
+    }
+
+    /*************************************************************************
+     * 3. PLAYCANVAS 3D ENGINE INITIALIZATION & MATERIALS
+     *************************************************************************/
+    const canvas = document.getElementById('application-canvas');
+    const app = new pc.Application(canvas, {
+        mouse: new pc.Mouse(canvas),
+        touch: new pc.TouchDevice(canvas),
+        keyboard: new pc.Keyboard(window)
+    });
+
+    app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
+    app.setCanvasResolution(pc.RESOLUTION_AUTO);
+    window.addEventListener('resize', () => app.resizeCanvas());
+
+    // Helper to create cached PlayCanvas StandardMaterial
+    const matCache = {};
+    function getMat(hexColor, emissiveHex = null, gloss = 0.5, metalness = 0.1, opacity = 1.0) {
+        const key = `${hexColor}_${emissiveHex}_${gloss}_${metalness}_${opacity}`;
+        if (matCache[key]) return matCache[key];
+        const m = new pc.StandardMaterial();
+        m.diffuse = new pc.Color().fromString(hexColor);
+        if (emissiveHex) {
+            m.emissive = new pc.Color().fromString(emissiveHex);
+            m.emissiveIntensity = 0.5;
+        }
+        m.shininess = gloss * 100;
+        if (metalness > 0) {
+            m.useMetalness = true;
+            m.metalness = metalness;
+        }
+        if (opacity < 1.0) {
+            m.opacity = opacity;
+            m.blendType = pc.BLEND_NORMAL;
+        }
+        m.update();
+        matCache[key] = m;
+        return m;
+    }
+
+    function addPrim(parent, type, mat, pos, scale, rot = [0, 0, 0]) {
+        const e = new pc.Entity();
+        e.addComponent('render', { type: type, material: mat, castShadows: true, receiveShadows: true });
+        e.setLocalPosition(pos[0], pos[1], pos[2]);
+        e.setLocalScale(scale[0], scale[1], scale[2]);
+        e.setLocalEulerAngles(rot[0], rot[1], rot[2]);
+        parent.addChild(e);
+        return e;
+    }
+
+    /*************************************************************************
+     * 4. MAP DESIGN: RECTANGULAR FIELD, S-SHAPED INTESTINAL PATH, 8 NODES & CASTLE
+     *************************************************************************/
+    // Large Rectangular Battlefield (Exceeds screen size; camera pans with player)
+    const MAP_HALF_W = 34;
+    const MAP_HALF_H = 24;
+
+    // Dense S-Shaped Waypoints for smooth bacteria navigation
+    const RAW_WAYPOINTS = [
+        new pc.Vec3(-28, 0, -16),
+        new pc.Vec3(-12, 0, -16),
+        new pc.Vec3(8, 0, -16),
+        new pc.Vec3(20, 0, -15),
+        new pc.Vec3(24, 0, -10),
+        new pc.Vec3(24, 0, -4),
+        new pc.Vec3(20, 0, 0),
+        new pc.Vec3(8, 0, 0),
+        new pc.Vec3(-8, 0, 0),
+        new pc.Vec3(-20, 0, 1),
+        new pc.Vec3(-24, 0, 5),
+        new pc.Vec3(-24, 0, 11),
+        new pc.Vec3(-20, 0, 15),
+        new pc.Vec3(-8, 0, 16),
+        new pc.Vec3(10, 0, 16),
+        new pc.Vec3(25, 0, 16) // Castle position
+    ];
+
+    // Subdivide waypoints into smooth curve points
+    const PATH_POINTS = [];
+    function buildSmoothPath() {
+        for (let i = 0; i < RAW_WAYPOINTS.length - 1; i++) {
+            const p0 = RAW_WAYPOINTS[Math.max(0, i - 1)];
+            const p1 = RAW_WAYPOINTS[i];
+            const p2 = RAW_WAYPOINTS[i + 1];
+            const p3 = RAW_WAYPOINTS[Math.min(RAW_WAYPOINTS.length - 1, i + 2)];
+            const steps = 10;
+            for (let s = 0; s < steps; s++) {
+                const t = s / steps;
+                const t2 = t * t;
+                const t3 = t2 * t;
+                // Catmull-Rom spline interpolation
+                const x = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+                const z = 0.5 * ((2 * p1.z) + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3);
+                PATH_POINTS.push(new pc.Vec3(x, 0, z));
+            }
+        }
+        PATH_POINTS.push(RAW_WAYPOINTS[RAW_WAYPOINTS.length - 1].clone());
+    }
+    buildSmoothPath();
+
+    // 8 Strategic Defense Nodes along the S-shaped path
+    const DEFENSE_NODES_POS = [
+        { id: 1, x: -16, z: -10.5 },
+        { id: 2, x: 2,   z: -10.5 },
+        { id: 3, x: 16,  z: -8.0  },
+        { id: 4, x: 10,  z: -5.5  },
+        { id: 5, x: -4,  z: -5.5  },
+        { id: 6, x: -15, z: 7.5   },
+        { id: 7, x: -3,  z: 10.5  },
+        { id: 8, x: 12,  z: 10.5  }
+    ];
+
+    /*************************************************************************
+     * 5. 3D PROCEDURAL CHARACTER & BACTERIA MODEL BUILDERS (+30% SCALE & HIGH DETAIL)
+     *************************************************************************/
+    const FRIENDLY_SCALE = 1.3; // All friendly characters (Surgeon & Defense Units) scaled +30%
+
+    // Create the Player Surgeon Model (Tazocin / Riding Tiger Tygecycline)
+    function createSurgeonModel() {
+        const root = new pc.Entity('PlayerRoot');
+        const visualGroup = new pc.Entity('VisualGroup');
+        // Scale entire friendly player character by +30% (1.3x)
+        visualGroup.setLocalScale(FRIENDLY_SCALE, FRIENDLY_SCALE, FRIENDLY_SCALE);
+        root.addChild(visualGroup);
+
+        // Tiger Mount Group (Hidden at Level 0, Shown when evolved to Tygecycline)
+        const tigerGroup = new pc.Entity('TigerMount');
+        const matTigerOrange = getMat('#f97316', null, 0.45);
+        const matTigerStripe = getMat('#18181b', null, 0.25);
+        const matTigerWhite  = getMat('#fef3c7', null, 0.35);
+        const matTigerNose   = getMat('#f43f5e', null, 0.4);
+
+        // Tiger muscular torso & chest
+        addPrim(tigerGroup, 'box', matTigerOrange, [0, 0.72, 0], [1.15, 0.82, 2.15]);
+        addPrim(tigerGroup, 'box', matTigerWhite,  [0, 0.45, 0.1], [0.92, 0.35, 1.85]);
+        // Black stripes on tiger body
+        for (let z = -0.75; z <= 0.75; z += 0.38) {
+            addPrim(tigerGroup, 'box', matTigerStripe, [0, 0.78, z], [1.2, 0.75, 0.1]);
+        }
+        // Tiger head, cheeks, snout & nose
+        addPrim(tigerGroup, 'box', matTigerOrange, [0, 1.18, 1.18], [0.9, 0.78, 0.82]);
+        addPrim(tigerGroup, 'sphere', matTigerWhite, [-0.32, 1.05, 1.35], [0.42, 0.38, 0.42]);
+        addPrim(tigerGroup, 'sphere', matTigerWhite, [0.32, 1.05, 1.35], [0.42, 0.38, 0.42]);
+        addPrim(tigerGroup, 'box', matTigerWhite,  [0, 1.02, 1.58], [0.58, 0.4, 0.35]);
+        addPrim(tigerGroup, 'sphere', matTigerNose, [0, 1.12, 1.76], [0.2, 0.15, 0.15]);
+        // Tiger fangs
+        addPrim(tigerGroup, 'cone', getMat('#ffffff'), [-0.18, 0.86, 1.62], [0.08, 0.22, 0.08], [180, 0, 0]);
+        addPrim(tigerGroup, 'cone', getMat('#ffffff'), [0.18, 0.86, 1.62], [0.08, 0.22, 0.08], [180, 0, 0]);
+        // Tiger ears & glowing fierce eyes
+        addPrim(tigerGroup, 'sphere', matTigerOrange, [-0.35, 1.62, 1.05], [0.28, 0.28, 0.2]);
+        addPrim(tigerGroup, 'sphere', matTigerOrange, [0.35, 1.62, 1.05], [0.28, 0.28, 0.2]);
+        addPrim(tigerGroup, 'sphere', getMat('#fde047', '#fde047'), [-0.22, 1.26, 1.54], [0.15, 0.15, 0.15]);
+        addPrim(tigerGroup, 'sphere', getMat('#fde047', '#fde047'), [0.22, 1.26, 1.54], [0.15, 0.15, 0.15]);
+        // Tiger legs, paws & striped tail
+        const tLegs = [
+            addPrim(tigerGroup, 'cylinder', matTigerOrange, [-0.42, 0.38, 0.78], [0.32, 0.75, 0.32]),
+            addPrim(tigerGroup, 'cylinder', matTigerOrange, [0.42, 0.38, 0.78], [0.32, 0.75, 0.32]),
+            addPrim(tigerGroup, 'cylinder', matTigerOrange, [-0.42, 0.38, -0.78], [0.32, 0.75, 0.32]),
+            addPrim(tigerGroup, 'cylinder', matTigerOrange, [0.42, 0.38, -0.78], [0.32, 0.75, 0.32])
+        ];
+        addPrim(tigerGroup, 'cylinder', matTigerOrange, [0, 0.95, -1.3], [0.18, 1.1, 0.18], [-45, 0, 0]);
+        tigerGroup.enabled = false;
+        visualGroup.addChild(tigerGroup);
+
+        // Surgeon Humanoid Group (Detailed Green Scrubs, Mask, Cap & Surgical Loupes)
+        const surgeonGroup = new pc.Entity('SurgeonBody');
+        const matScrubGreen = getMat('#10b981', null, 0.4);
+        const matScrubDark  = getMat('#047857', null, 0.35);
+        const matMaskGreen  = getMat('#a7f3d0', null, 0.3);
+        const matCapGreen   = getMat('#059669', null, 0.45);
+        const matSkin       = getMat('#ffe4d6', null, 0.35);
+        const matGlove      = getMat('#bef264', null, 0.5);
+        const matLoupeStrap = getMat('#451a03', null, 0.6);
+        const matLoupeMetal = getMat('#27272a', null, 0.9, 0.8);
+
+        // Scrubs Torso & Tunic Hem + Breast Pocket
+        addPrim(surgeonGroup, 'box', matScrubGreen, [0, 1.15, 0], [0.86, 1.05, 0.54]);
+        addPrim(surgeonGroup, 'box', matScrubDark,  [-0.22, 1.32, 0.28], [0.22, 0.24, 0.04]);
+        // V-neck collar detail
+        addPrim(surgeonGroup, 'box', matSkin, [0, 1.62, 0.23], [0.3, 0.2, 0.18]);
+        // Legs & Surgical Shoes
+        const sLegL = addPrim(surgeonGroup, 'cylinder', matScrubDark, [-0.22, 0.38, 0], [0.28, 0.75, 0.28]);
+        const sLegR = addPrim(surgeonGroup, 'cylinder', matScrubDark, [0.22, 0.38, 0], [0.28, 0.75, 0.28]);
+        addPrim(sLegL, 'box', getMat('#ecfdf5'), [0, -0.42, 0.12], [0.95, 0.25, 1.35]);
+        addPrim(sLegR, 'box', getMat('#ecfdf5'), [0, -0.42, 0.12], [0.95, 0.25, 1.35]);
+
+        // Head & Black Anime Hair bangs (matching Image 4 reference)
+        addPrim(surgeonGroup, 'sphere', matSkin, [0, 2.02, 0], [0.7, 0.74, 0.7]);
+        addPrim(surgeonGroup, 'box', getMat('#18181b'), [0, 2.12, 0.31], [0.52, 0.14, 0.12], [10, 0, 0]);
+        // Surgical Mask with side ties
+        addPrim(surgeonGroup, 'box', matMaskGreen, [0, 1.9, 0.28], [0.5, 0.3, 0.22]);
+        addPrim(surgeonGroup, 'box', getMat('#ffffff'), [0, 1.96, 0.02], [0.71, 0.04, 0.65]);
+        // Expressive Eyes with pupils
+        addPrim(surgeonGroup, 'sphere', getMat('#ffffff'), [-0.15, 2.06, 0.31], [0.14, 0.12, 0.08]);
+        addPrim(surgeonGroup, 'sphere', getMat('#ffffff'), [0.15, 2.06, 0.31], [0.14, 0.12, 0.08]);
+        addPrim(surgeonGroup, 'sphere', getMat('#1c1917'), [-0.15, 2.06, 0.34], [0.08, 0.08, 0.06]);
+        addPrim(surgeonGroup, 'sphere', getMat('#1c1917'), [0.15, 2.06, 0.34], [0.08, 0.08, 0.06]);
+        // Green Surgical Cap + Back Tie
+        addPrim(surgeonGroup, 'cylinder', matCapGreen, [0, 2.3, 0], [0.74, 0.32, 0.74]);
+        addPrim(surgeonGroup, 'sphere', matCapGreen, [0, 2.38, 0], [0.72, 0.28, 0.72]);
+        // Surgical Loupes & Headband Strap (Binocular magnifiers from Image 4)
+        addPrim(surgeonGroup, 'box', matLoupeStrap, [0, 2.2, 0.02], [0.76, 0.1, 0.76]);
+        addPrim(surgeonGroup, 'box', matLoupeStrap, [0, 2.42, 0.02], [0.1, 0.32, 0.74]);
+        addPrim(surgeonGroup, 'cylinder', matLoupeMetal, [-0.15, 2.15, 0.42], [0.15, 0.26, 0.15], [90, 0, 0]);
+        addPrim(surgeonGroup, 'cylinder', matLoupeMetal, [0.15, 2.15, 0.42], [0.15, 0.26, 0.15], [90, 0, 0]);
+        addPrim(surgeonGroup, 'sphere', getMat('#e0f2fe', '#38bdf8'), [-0.15, 2.15, 0.55], [0.12, 0.12, 0.04]);
+        addPrim(surgeonGroup, 'sphere', getMat('#e0f2fe', '#38bdf8'), [0.15, 2.15, 0.55], [0.12, 0.12, 0.04]);
+
+        // Right Throwing Arm with Green Surgical Glove holding a shiny Scalpel
+        const rightArm = new pc.Entity('RightArm');
+        rightArm.setLocalPosition(0.55, 1.45, 0.2);
+        addPrim(rightArm, 'cylinder', matScrubGreen, [0, 0, 0.2], [0.22, 0.5, 0.22], [90, 0, 0]);
+        addPrim(rightArm, 'sphere', matGlove, [0, 0, 0.48], [0.24, 0.24, 0.24]);
+        // Scalpel handle & gleaming blade in hand
+        addPrim(rightArm, 'box', getMat('#334155', null, 0.8, 0.6), [0, 0, 0.62], [0.07, 0.09, 0.32]);
+        addPrim(rightArm, 'box', getMat('#f8fafc', '#e2e8f0', 0.95, 0.9), [0, 0, 0.88], [0.04, 0.12, 0.35]);
+        surgeonGroup.addChild(rightArm);
+
+        // Left Arm with Surgical Glove
+        addPrim(surgeonGroup, 'cylinder', matScrubGreen, [-0.55, 1.35, 0.1], [0.22, 0.55, 0.22], [45, 0, 0]);
+        addPrim(surgeonGroup, 'sphere', matGlove, [-0.55, 1.15, 0.32], [0.23, 0.23, 0.23]);
+
+        visualGroup.addChild(surgeonGroup);
+
+        return {
+            root,
+            visualGroup,
+            tigerGroup,
+            surgeonGroup,
+            rightArm,
+            sLegL,
+            sLegR,
+            tLegs
+        };
+    }
+
+    // Create 4 Defense Units + 1 Upgraded Unit Models (+30% Scale & High Detail)
+    function createDefenseUnitModel(type) {
+        const root = new pc.Entity(`Tower_${type}`);
+        const modelGroup = new pc.Entity('ModelGroup');
+        // Scale all defense characters by +30% (1.3x)
+        modelGroup.setLocalScale(FRIENDLY_SCALE, FRIENDLY_SCALE, FRIENDLY_SCALE);
+        root.addChild(modelGroup);
+
+        const skinMat = getMat('#fed7aa', null, 0.35);
+        const fairSkinMat = getMat('#ffe8dc', null, 0.4); // Fair/white skin for Sniper Maid Zavicefta
+        let weaponMuzzle = new pc.Entity('Muzzle');
+
+        // Helper for character eyes
+        function addCharacterEyes(parent, yPos, zPos, eyeColorHex = '#1e293b') {
+            addPrim(parent, 'sphere', getMat('#ffffff'), [-0.14, yPos, zPos], [0.13, 0.13, 0.08]);
+            addPrim(parent, 'sphere', getMat('#ffffff'), [0.14, yPos, zPos], [0.13, 0.13, 0.08]);
+            addPrim(parent, 'sphere', getMat(eyeColorHex), [-0.14, yPos, zPos + 0.03], [0.08, 0.09, 0.06]);
+            addPrim(parent, 'sphere', getMat(eyeColorHex), [0.14, yPos, zPos + 0.03], [0.08, 0.09, 0.06]);
+        }
+
+        if (type === 'Ertapenem') {
+            // 1. Sporty Boy wearing a Baseball Cap throwing Baseballs
+            addPrim(modelGroup, 'cylinder', getMat('#1e3a8a'), [-0.19, 0.38, 0], [0.25, 0.75, 0.25]);
+            addPrim(modelGroup, 'cylinder', getMat('#1e3a8a'), [0.19, 0.38, 0], [0.25, 0.75, 0.25]);
+            addPrim(modelGroup, 'box', getMat('#ef4444'), [-0.19, 0.08, 0.08], [0.27, 0.16, 0.38]);
+            addPrim(modelGroup, 'box', getMat('#ef4444'), [0.19, 0.08, 0.08], [0.27, 0.16, 0.38]);
+            // Baseball Jersey (Sky blue with white front stripe)
+            addPrim(modelGroup, 'box', getMat('#0284c7'), [0, 1.08, 0], [0.78, 0.92, 0.5]);
+            addPrim(modelGroup, 'box', getMat('#f8fafc'), [0, 1.08, 0.26], [0.24, 0.9, 0.04]);
+            // Head & Eyes
+            addPrim(modelGroup, 'sphere', skinMat, [0, 1.84, 0], [0.64, 0.64, 0.64]);
+            addCharacterEyes(modelGroup, 1.84, 0.29, '#0f172a');
+            // Red/White Baseball Cap with prominent Visor facing forward (+Z)
+            addPrim(modelGroup, 'sphere', getMat('#dc2626'), [0, 1.98, 0], [0.67, 0.46, 0.67]);
+            addPrim(modelGroup, 'box', getMat('#ffffff'), [0, 2.02, 0.3], [0.2, 0.14, 0.08]);
+            addPrim(modelGroup, 'box', getMat('#b91c1c'), [0, 1.94, 0.38], [0.52, 0.08, 0.42]);
+            // Left Arm with leather glove & Right Arm holding White Baseball
+            addPrim(modelGroup, 'cylinder', skinMat, [-0.48, 1.25, 0.15], [0.2, 0.55, 0.2], [45, 0, 0]);
+            addPrim(modelGroup, 'sphere', getMat('#78350f'), [-0.48, 1.08, 0.35], [0.3, 0.28, 0.28]);
+            addPrim(modelGroup, 'cylinder', skinMat, [0.48, 1.35, 0.25], [0.2, 0.6, 0.2], [90, 0, 0]);
+            addPrim(modelGroup, 'sphere', getMat('#ffffff', '#f1f5f9'), [0.48, 1.35, 0.62], [0.28, 0.28, 0.28]);
+            weaponMuzzle.setLocalPosition(0.48, 1.35, 0.68);
+            modelGroup.addChild(weaponMuzzle);
+
+        } else if (type === 'Meropenem') {
+            // Upgraded: Firefighter in Red Coat & Yellow Stripes holding Heavy Water Hose
+            addPrim(modelGroup, 'cylinder', getMat('#450a0a'), [-0.21, 0.38, 0], [0.29, 0.75, 0.29]);
+            addPrim(modelGroup, 'cylinder', getMat('#450a0a'), [0.21, 0.38, 0], [0.29, 0.75, 0.29]);
+            // Red firefighter turnout coat with double yellow/silver reflective stripes
+            addPrim(modelGroup, 'box', getMat('#dc2626'), [0, 1.12, 0], [0.88, 1.02, 0.58]);
+            addPrim(modelGroup, 'box', getMat('#facc15', '#eab308'), [0, 0.85, 0], [0.91, 0.14, 0.61]);
+            addPrim(modelGroup, 'box', getMat('#facc15', '#eab308'), [0, 1.28, 0], [0.91, 0.12, 0.61]);
+            // Oxygen tank on back
+            addPrim(modelGroup, 'cylinder', getMat('#eab308', null, 0.8, 0.5), [0, 1.2, -0.38], [0.28, 0.7, 0.28]);
+            // Head, Eyes & Firefighter Helmet with golden badge
+            addPrim(modelGroup, 'sphere', skinMat, [0, 1.88, 0], [0.64, 0.64, 0.64]);
+            addCharacterEyes(modelGroup, 1.88, 0.29, '#1e293b');
+            addPrim(modelGroup, 'cylinder', getMat('#991b1b'), [0, 2.08, -0.06], [0.92, 0.12, 1.05]);
+            addPrim(modelGroup, 'sphere', getMat('#ef4444'), [0, 2.18, 0], [0.7, 0.5, 0.7]);
+            addPrim(modelGroup, 'box', getMat('#facc15', '#ca8a04', 0.9, 0.8), [0, 2.22, 0.34], [0.22, 0.24, 0.08]);
+            // Two-handed Heavy Fire Hose & Brass Nozzle aimed forward (+Z)
+            addPrim(modelGroup, 'cylinder', getMat('#dc2626'), [0.46, 1.28, 0.3], [0.22, 0.6, 0.22], [75, 0, 0]);
+            addPrim(modelGroup, 'cylinder', getMat('#dc2626'), [-0.32, 1.25, 0.35], [0.22, 0.65, 0.22], [75, 30, 0]);
+            addPrim(modelGroup, 'cylinder', getMat('#334155', null, 0.7, 0.6), [0.32, 1.15, 0.58], [0.28, 1.25, 0.28], [90, 0, 0]);
+            addPrim(modelGroup, 'cylinder', getMat('#fbbf24', '#d97706', 0.95, 0.85), [0.32, 1.15, 1.25], [0.34, 0.3, 0.34], [90, 0, 0]);
+            weaponMuzzle.setLocalPosition(0.32, 1.15, 1.42);
+            modelGroup.addChild(weaponMuzzle);
+
+        } else if (type === 'Ciprofloxacin') {
+            // 2. Girl Archer (Image 3: Light blue/teal tank top, cargo pants, boots, ponytail, large bow)
+            addPrim(modelGroup, 'cylinder', getMat('#57534e'), [-0.19, 0.42, 0], [0.25, 0.82, 0.25]);
+            addPrim(modelGroup, 'cylinder', getMat('#57534e'), [0.19, 0.42, 0], [0.25, 0.82, 0.25]);
+            addPrim(modelGroup, 'box', getMat('#451a03'), [-0.19, 0.14, 0.05], [0.27, 0.28, 0.34]);
+            addPrim(modelGroup, 'box', getMat('#451a03'), [0.19, 0.14, 0.05], [0.27, 0.28, 0.34]);
+            // Belt & Quiver on back
+            addPrim(modelGroup, 'box', getMat('#451a03'), [0, 0.8, 0], [0.72, 0.12, 0.48]);
+            addPrim(modelGroup, 'cylinder', getMat('#78350f'), [-0.2, 1.35, -0.32], [0.22, 0.75, 0.22], [0, 0, -20]);
+            // Light Blue/Teal Tank Top & Shoulders
+            addPrim(modelGroup, 'box', getMat('#38bdf8'), [0, 1.18, 0], [0.68, 0.72, 0.44]);
+            addPrim(modelGroup, 'cylinder', skinMat, [-0.42, 1.35, 0.25], [0.18, 0.65, 0.18], [90, 15, 0]);
+            addPrim(modelGroup, 'cylinder', skinMat, [0.42, 1.35, 0.35], [0.18, 0.72, 0.18], [90, 0, 0]);
+            // Head, Dark Brown Hair & Ponytail
+            addPrim(modelGroup, 'sphere', skinMat, [0, 1.86, 0], [0.6, 0.62, 0.6]);
+            addCharacterEyes(modelGroup, 1.86, 0.28, '#292524');
+            addPrim(modelGroup, 'sphere', getMat('#292524'), [0, 1.96, -0.05], [0.64, 0.56, 0.64]);
+            addPrim(modelGroup, 'cylinder', getMat('#292524'), [0, 1.78, -0.45], [0.22, 0.58, 0.22], [-38, 0, 0]);
+            // Large Curved Wooden Bow, Bowstring & Nocked Arrow in front (+Z)
+            addPrim(modelGroup, 'cylinder', getMat('#92400e'), [0.25, 1.65, 0.72], [0.09, 0.8, 0.09], [22, 0, 8]);
+            addPrim(modelGroup, 'cylinder', getMat('#92400e'), [0.25, 0.98, 0.72], [0.09, 0.8, 0.09], [-22, 0, 8]);
+            addPrim(modelGroup, 'cylinder', getMat('#e2e8f0'), [0.22, 1.32, 0.48], [0.03, 1.38, 0.03], [0, 0, 8]);
+            addPrim(modelGroup, 'cylinder', getMat('#f59e0b'), [0.22, 1.32, 0.68], [0.04, 0.75, 0.04], [90, 0, 0]);
+            weaponMuzzle.setLocalPosition(0.22, 1.32, 0.88);
+            modelGroup.addChild(weaponMuzzle);
+
+        } else if (type === 'Zavicefta') {
+            // 3. Sniper Maid: Black Maid Dress, White Frilly Apron & Headband, Fair/White Skin, Long Sniper Rifle (Image 1)
+            const blackDressMat = getMat('#121216', null, 0.4);
+            const pureWhiteMat  = getMat('#ffffff', '#f8fafc', 0.5);
+            const hairGoldBrown = getMat('#a16207', null, 0.55);
+
+            // Black Stockings & Fair-skinned thighs
+            addPrim(modelGroup, 'cylinder', getMat('#18181b'), [-0.19, 0.32, 0], [0.23, 0.64, 0.23]);
+            addPrim(modelGroup, 'cylinder', getMat('#18181b'), [0.19, 0.32, 0], [0.23, 0.64, 0.23]);
+            addPrim(modelGroup, 'cylinder', fairSkinMat, [-0.19, 0.68, 0], [0.24, 0.18, 0.24]);
+            addPrim(modelGroup, 'cylinder', fairSkinMat, [0.19, 0.68, 0], [0.24, 0.18, 0.24]);
+
+            // Black Maid Skirt with White Frilly Hem + White Apron & Back Ribbon Bow
+            addPrim(modelGroup, 'cone', pureWhiteMat, [0, 0.84, 0], [1.26, 0.92, 1.26]);
+            addPrim(modelGroup, 'cone', blackDressMat, [0, 0.92, 0], [1.18, 0.92, 1.18]);
+            addPrim(modelGroup, 'box', pureWhiteMat, [0, 0.95, 0.28], [0.62, 0.78, 0.22]);
+            // Cute white apron bow on the back
+            addPrim(modelGroup, 'box', pureWhiteMat, [-0.22, 1.05, -0.32], [0.32, 0.18, 0.1], [0, 0, 20]);
+            addPrim(modelGroup, 'box', pureWhiteMat, [0.22, 1.05, -0.32], [0.32, 0.18, 0.1], [0, 0, -20]);
+
+            // Black Maid Bodice, White Collar & Puffy Black/White Sleeves with Fair Skin Arms
+            addPrim(modelGroup, 'box', blackDressMat, [0, 1.32, 0], [0.68, 0.66, 0.44]);
+            addPrim(modelGroup, 'box', pureWhiteMat, [0, 1.48, 0.22], [0.42, 0.26, 0.08]);
+            addPrim(modelGroup, 'sphere', blackDressMat, [-0.42, 1.5, 0.05], [0.28, 0.28, 0.28]);
+            addPrim(modelGroup, 'sphere', blackDressMat, [0.42, 1.5, 0.05], [0.28, 0.28, 0.28]);
+            addPrim(modelGroup, 'cylinder', fairSkinMat, [0.38, 1.35, 0.35], [0.17, 0.58, 0.17], [85, -10, 0]);
+            addPrim(modelGroup, 'cylinder', fairSkinMat, [-0.25, 1.32, 0.42], [0.17, 0.65, 0.17], [85, 25, 0]);
+
+            // Fair/White Skin Head, Blue-Grey Anime Eyes, Golden-Brown Flowing Twin Tails & White Frilly Maid Headband
+            addPrim(modelGroup, 'sphere', fairSkinMat, [0, 1.9, 0], [0.62, 0.62, 0.62]);
+            addCharacterEyes(modelGroup, 1.9, 0.28, '#2563eb');
+            addPrim(modelGroup, 'sphere', hairGoldBrown, [0, 2.0, -0.05], [0.66, 0.56, 0.66]);
+            // Frilly White Maid Headband (カチューシャ)
+            addPrim(modelGroup, 'cylinder', pureWhiteMat, [0, 2.22, 0.05], [0.64, 0.14, 0.35], [15, 0, 0]);
+            // Flowing Twin Hair Tails
+            addPrim(modelGroup, 'cylinder', hairGoldBrown, [-0.38, 1.72, -0.38], [0.18, 0.88, 0.18], [-35, 0, 22]);
+            addPrim(modelGroup, 'cylinder', hairGoldBrown, [0.38, 1.72, -0.38], [0.18, 0.88, 0.18], [-35, 0, -22]);
+
+            // Heavy Tactical Black Sniper Rifle with High-Power Scope, Magazine & Muzzle Brake aimed forward (+Z)
+            const gunBlack = getMat('#09090b', null, 0.85, 0.85);
+            const gunSteel = getMat('#27272a', null, 0.9, 0.9);
+            // Rifle Receiver & Stock
+            addPrim(modelGroup, 'box', gunBlack, [0.26, 1.38, 0.52], [0.16, 0.24, 1.15]);
+            addPrim(modelGroup, 'box', gunBlack, [0.26, 1.3, 0.02], [0.14, 0.28, 0.45]);
+            // Extended Magazine
+            addPrim(modelGroup, 'box', gunSteel, [0.26, 1.12, 0.62], [0.12, 0.36, 0.22], [12, 0, 0]);
+            // Long Fluted Sniper Barrel & Muzzle Brake
+            addPrim(modelGroup, 'cylinder', gunSteel, [0.26, 1.42, 1.45], [0.09, 1.35, 0.09], [90, 0, 0]);
+            addPrim(modelGroup, 'box', gunBlack, [0.26, 1.42, 2.12], [0.14, 0.14, 0.22]);
+            // Telescopic Sniper Scope
+            addPrim(modelGroup, 'cylinder', gunBlack, [0.26, 1.6, 0.65], [0.13, 0.58, 0.13], [90, 0, 0]);
+            addPrim(modelGroup, 'cylinder', gunBlack, [0.26, 1.6, 0.94], [0.17, 0.12, 0.17], [90, 0, 0]);
+            weaponMuzzle.setLocalPosition(0.26, 1.42, 2.22);
+            modelGroup.addChild(weaponMuzzle);
+
+        } else if (type === 'Erasix') {
+            // 4. Crimson Mage Girl (Image 2: Red Cloak & Dress with Gold Trim, Huge Pointed Wizard Hat, Wooden Staff with Glowing Red Orb)
+            const crimsonMat = getMat('#dc2626', null, 0.45);
+            const darkBrown  = getMat('#3f1d0b', null, 0.35);
+            const goldTrim   = getMat('#facc15', '#eab308', 0.7);
+
+            // Asymmetrical stockings (one white bandaged leg, one black stocking like Image 2)
+            addPrim(modelGroup, 'cylinder', getMat('#f8fafc'), [-0.18, 0.35, 0], [0.22, 0.7, 0.22]);
+            addPrim(modelGroup, 'cylinder', getMat('#18181b'), [0.18, 0.35, 0], [0.22, 0.7, 0.22]);
+
+            // Red Dress, Belt with Silver Buckle & Flowing Cape with Gold Trim
+            addPrim(modelGroup, 'cone', crimsonMat, [0, 0.88, 0], [1.12, 1.25, 1.12]);
+            addPrim(modelGroup, 'cylinder', goldTrim, [0, 0.32, 0], [1.15, 0.1, 1.15]);
+            addPrim(modelGroup, 'box', darkBrown, [0, 0.82, 0], [0.76, 0.14, 0.62]);
+            addPrim(modelGroup, 'box', getMat('#e2e8f0'), [0, 0.82, 0.32], [0.2, 0.18, 0.06]);
+            // Flared Red Sleeves
+            addPrim(modelGroup, 'cone', crimsonMat, [0.46, 1.25, 0.25], [0.36, 0.55, 0.36], [-65, 0, -25]);
+            addPrim(modelGroup, 'cone', crimsonMat, [-0.46, 1.2, 0.1], [0.36, 0.55, 0.36], [-30, 0, 30]);
+
+            // Head, Crimson Anime Eyes & Brown Hair
+            addPrim(modelGroup, 'sphere', fairSkinMat, [0, 1.76, 0], [0.64, 0.64, 0.64]);
+            addCharacterEyes(modelGroup, 1.76, 0.29, '#dc2626');
+            addPrim(modelGroup, 'sphere', darkBrown, [0, 1.84, -0.05], [0.68, 0.6, 0.68]);
+
+            // Iconic Oversized Wizard Hat with Gold Rim & Cross Emblem
+            addPrim(modelGroup, 'cylinder', darkBrown, [0, 2.04, 0], [1.55, 0.08, 1.55]);
+            addPrim(modelGroup, 'cylinder', goldTrim, [0, 2.06, 0], [1.58, 0.04, 1.58]);
+            addPrim(modelGroup, 'cone', darkBrown, [0, 2.55, 0], [0.92, 1.05, 0.92]);
+            addPrim(modelGroup, 'sphere', crimsonMat, [0, 2.45, 0.36], [0.32, 0.32, 0.12]);
+            addPrim(modelGroup, 'box', goldTrim, [0, 2.45, 0.41], [0.22, 0.06, 0.06], [0, 0, 45]);
+            addPrim(modelGroup, 'box', goldTrim, [0, 2.45, 0.41], [0.22, 0.06, 0.06], [0, 0, -45]);
+
+            // Curved Wooden Arch-Staff with Floating Glowing Red Orb
+            addPrim(modelGroup, 'cylinder', getMat('#b45309'), [0.56, 1.25, 0.45], [0.13, 1.9, 0.13], [22, 0, 0]);
+            addPrim(modelGroup, 'box', getMat('#f8fafc'), [0.56, 1.35, 0.49], [0.16, 0.38, 0.16], [22, 0, 0]);
+            // Curved staff head crook
+            addPrim(modelGroup, 'box', getMat('#b45309'), [0.56, 2.08, 0.78], [0.14, 0.38, 0.42], [22, 0, 0]);
+            // Floating Glowing Red Mana Orb
+            addPrim(modelGroup, 'sphere', getMat('#ef4444', '#dc2626', 0.9), [0.56, 2.1, 0.92], [0.38, 0.38, 0.38]);
+            weaponMuzzle.setLocalPosition(0.56, 2.1, 0.98);
+            modelGroup.addChild(weaponMuzzle);
+        }
+
+        return { root, weaponMuzzle };
+    }
+
+    // Create 7 Anthropomorphic 3D Bacteria Models (With Large, High-Contrast Shields for ESBL & CRE)
+    function createBacteriumModel(type) {
+        const root = new pc.Entity(`Bacteria_${type}`);
+        const eyeWhite = getMat('#ffffff');
+        const eyePupil = getMat('#09090b');
+
+        // Helper to attach cute/angry anthropomorphic 3D eyes & legs
+        function addEyesAndFeet(target, eyeY, eyeZ, legY = 0.25) {
+            addPrim(target, 'sphere', eyeWhite, [-0.18, eyeY, eyeZ], [0.22, 0.22, 0.22]);
+            addPrim(target, 'sphere', eyeWhite, [0.18, eyeY, eyeZ], [0.22, 0.22, 0.22]);
+            addPrim(target, 'sphere', eyePupil, [-0.18, eyeY, eyeZ + 0.09], [0.11, 0.11, 0.11]);
+            addPrim(target, 'sphere', eyePupil, [0.18, eyeY, eyeZ + 0.09], [0.11, 0.11, 0.11]);
+            // Little anthropomorphic feet
+            addPrim(target, 'sphere', getMat('#1f2937'), [-0.24, legY, 0.1], [0.26, 0.18, 0.36]);
+            addPrim(target, 'sphere', getMat('#1f2937'), [0.24, legY, 0.1], [0.26, 0.18, 0.36]);
+        }
+
+        if (type === 'entero' || type === 'esbl' || type === 'cre') {
+            // 1, 5, 6: Red sausage-shaped bacterium
+            const redSausageMat = getMat('#ef4444', '#7f1d1d', 0.65);
+            addPrim(root, 'capsule', redSausageMat, [0, 1.05, 0], [0.95, 1.65, 0.95]);
+            addEyesAndFeet(root, 1.35, 0.42);
+
+            if (type === 'esbl') {
+                // 5. ESBL: Red Sausage Bacterium holding a LARGE, UNMISTAKABLE 3D SILVER KNIGHT SHIELD
+                const shieldGroup = new pc.Entity('SilverShield');
+                shieldGroup.setLocalPosition(0.58, 1.05, 0.55);
+                shieldGroup.setLocalEulerAngles(0, -18, 0);
+
+                // Bacterium Arm gripping the shield
+                addPrim(root, 'cylinder', redSausageMat, [0.46, 1.05, 0.28], [0.22, 0.55, 0.22], [75, 25, 0]);
+
+                const silverFace = getMat('#f8fafc', '#cbd5e1', 0.95, 0.9);
+                const silverRim  = getMat('#334155', '#1e293b', 0.85, 0.8);
+                const cyanGem    = getMat('#38bdf8', '#0284c7', 0.95);
+
+                // Dark metallic outer frame + bright silver inner plate + bottom heater point
+                addPrim(shieldGroup, 'box', silverRim,  [0, 0.12, 0], [1.18, 1.35, 0.16]);
+                addPrim(shieldGroup, 'box', silverFace, [0, 0.12, 0.04], [0.98, 1.15, 0.16]);
+                addPrim(shieldGroup, 'cone', silverRim, [0, -0.75, 0], [1.18, 0.55, 0.2], [180, 0, 0]);
+                // Raised Silver Cross & Glowing Cyan Boss in center
+                addPrim(shieldGroup, 'box', silverRim,  [0, 0.12, 0.11], [0.22, 0.95, 0.08]);
+                addPrim(shieldGroup, 'box', silverRim,  [0, 0.18, 0.11], [0.78, 0.22, 0.08]);
+                addPrim(shieldGroup, 'sphere', cyanGem, [0, 0.18, 0.16], [0.32, 0.32, 0.18]);
+                root.addChild(shieldGroup);
+
+            } else if (type === 'cre') {
+                // 6. CRE: Red Sausage Bacterium holding a LARGE, RADIANT 3D GOLD TOWER SHIELD
+                const shieldGroup = new pc.Entity('GoldShield');
+                shieldGroup.setLocalPosition(0.6, 1.08, 0.58);
+                shieldGroup.setLocalEulerAngles(0, -18, 0);
+
+                // Bacterium Arm gripping the shield
+                addPrim(root, 'cylinder', redSausageMat, [0.46, 1.05, 0.28], [0.24, 0.58, 0.24], [75, 25, 0]);
+
+                const goldFace = getMat('#fde047', '#eab308', 1.0, 0.95);
+                const goldRim  = getMat('#b45309', '#78350f', 0.9, 0.85);
+                const rubyGem  = getMat('#ef4444', '#dc2626', 0.95);
+
+                // Heavy Bronze-Gold Outer Frame + Radiant Gold Plate + Bottom Point + Top Crown Spikes
+                addPrim(shieldGroup, 'box', goldRim,  [0, 0.14, 0], [1.28, 1.45, 0.18]);
+                addPrim(shieldGroup, 'box', goldFace, [0, 0.14, 0.05], [1.06, 1.24, 0.18]);
+                addPrim(shieldGroup, 'cone', goldFace, [0, -0.8, 0.02], [1.26, 0.6, 0.22], [180, 0, 0]);
+                // Golden Cross & Large Glowing Ruby Core
+                addPrim(shieldGroup, 'box', goldRim, [0, 0.14, 0.13], [0.24, 1.05, 0.09]);
+                addPrim(shieldGroup, 'box', goldRim, [0, 0.2, 0.13], [0.86, 0.24, 0.09]);
+                addPrim(shieldGroup, 'sphere', rubyGem, [0, 0.2, 0.19], [0.38, 0.38, 0.22]);
+                root.addChild(shieldGroup);
+            }
+
+        } else if (type === 'enterococcus') {
+            // 2. 腸球菌: Black small spheres forming a long chain
+            const blackSphereMat = getMat('#18181b', '#27272a', 0.8, 0.3);
+            for (let i = 0; i < 6; i++) {
+                const offsetZ = 0.55 - i * 0.38;
+                const offsetY = 0.65 + Math.sin(i * 1.1) * 0.14;
+                const offsetX = Math.cos(i * 1.2) * 0.12;
+                addPrim(root, 'sphere', blackSphereMat, [offsetX, offsetY, offsetZ], [0.52, 0.52, 0.52]);
+            }
+            addEyesAndFeet(root, 0.82, 0.78, 0.2);
+
+        } else if (type === 'pseudo') {
+            // 3. 綠膿桿菌: Green long rod-shaped bacterium
+            const greenRodMat = getMat('#22c55e', '#15803d', 0.7);
+            addPrim(root, 'cylinder', greenRodMat, [0, 0.85, 0], [0.72, 1.85, 0.72], [75, 0, 0]);
+            addPrim(root, 'sphere', greenRodMat, [0, 1.08, 0.82], [0.72, 0.72, 0.72]);
+            addPrim(root, 'sphere', greenRodMat, [0, 0.62, -0.82], [0.72, 0.72, 0.72]);
+            addEyesAndFeet(root, 1.2, 1.08, 0.22);
+
+        } else if (type === 'anaerobe') {
+            // 4. 厭氧菌: Black rod-shaped bacterium
+            const blackRodMat = getMat('#1c1917', '#0c0a09', 0.6, 0.2);
+            addPrim(root, 'cylinder', blackRodMat, [0, 1.05, 0], [0.78, 1.55, 0.78]);
+            addPrim(root, 'box', getMat('#dc2626'), [-0.18, 1.5, 0.38], [0.22, 0.06, 0.1], [0, 0, -20]);
+            addPrim(root, 'box', getMat('#dc2626'), [0.18, 1.5, 0.38], [0.22, 0.06, 0.1], [0, 0, 20]);
+            addEyesAndFeet(root, 1.35, 0.36);
+
+        } else if (type === 'candida') {
+            // 7. 念珠菌: White small spheres clustered into a ball/clump
+            const whiteMat = getMat('#f8fafc', '#cbd5e1', 0.75);
+            const clusterOffsets = [
+                [0, 0.85, 0], [0.32, 0.85, 0.26], [-0.32, 0.85, 0.26],
+                [0.28, 0.85, -0.28], [-0.28, 0.85, -0.28],
+                [0, 1.22, 0.15], [-0.24, 1.18, -0.1], [0.24, 1.18, -0.1],
+                [0, 0.55, 0.25], [0, 1.38, -0.05]
+            ];
+            clusterOffsets.forEach(pos => {
+                addPrim(root, 'sphere', whiteMat, pos, [0.54, 0.54, 0.54]);
+            });
+            addEyesAndFeet(root, 1.12, 0.48, 0.22);
+        }
+
+        return root;
+    }
+
+    /*************************************************************************
+     * 6. BUILD 3D SCENE: CAMERA, LIGHTS, INTESTINAL ENVIRONMENT, CASTLE
+     *************************************************************************/
+    // Fixed-angle Isometric / Top-Down Camera that tracks the player
+    const cameraEntity = new pc.Entity('MainCamera');
+    cameraEntity.addComponent('camera', {
+        clearColor: new pc.Color(0.12, 0.04, 0.07),
+        farClip: 200,
+        fov: 45
+    });
+    // Fixed camera offset & angle so we often see player/defenders' backs when aiming
+    const CAM_OFFSET = new pc.Vec3(0, 27, -21);
+    cameraEntity.setPosition(0, 27, -21);
+    cameraEntity.setEulerAngles(-52, 0, 0);
+    app.root.addChild(cameraEntity);
+
+    // Ambient & Directional Lighting
+    app.scene.ambientLight = new pc.Color(0.55, 0.45, 0.5);
+    const dirLight = new pc.Entity('DirLight');
+    dirLight.addComponent('light', {
+        type: 'directional',
+        color: new pc.Color(1, 0.96, 0.92),
+        intensity: 1.15,
+        castShadows: false
+    });
+    dirLight.setEulerAngles(55, 35, 0);
+    app.root.addChild(dirLight);
+
+    // Ground Battlefield Plane
+    const groundMat = getMat('#3b121e', null, 0.2);
+    addPrim(app.root, 'box', groundMat, [0, -0.4, 0], [MAP_HALF_W * 2 + 16, 0.8, MAP_HALF_H * 2 + 16]);
+
+    // Build S-Shaped Path with Large Intestine Haustra Folds (大腸皺摺裝飾)
+    const pathSurfaceMat = getMat('#6e2135', null, 0.35);
+    const foldMat1       = getMat('#9f324d', '#4c1120', 0.55);
+    const foldMat2       = getMat('#b8415e', '#591627', 0.6);
+
+    for (let i = 0; i < PATH_POINTS.length - 1; i++) {
+        const pA = PATH_POINTS[i];
+        const pB = PATH_POINTS[i + 1];
+        const midX = (pA.x + pB.x) * 0.5;
+        const midZ = (pA.z + pB.z) * 0.5;
+        const dx = pB.x - pA.x;
+        const dz = pB.z - pA.z;
+        const angleY = Math.atan2(dx, dz) * (180 / Math.PI);
+
+        // Path Floor Tile
+        addPrim(app.root, 'cylinder', pathSurfaceMat, [midX, 0.02, midZ], [4.5, 0.06, 4.5]);
+
+        // Intestinal Haustra Folds (Ribbed mucosal rings & side bulges along the S-path)
+        if (i % 2 === 0) {
+            const perpX = Math.cos(angleY * Math.PI / 180);
+            const perpZ = -Math.sin(angleY * Math.PI / 180);
+            const fMat = (i % 4 === 0) ? foldMat1 : foldMat2;
+
+            // Left & Right intestinal wall folds
+            addPrim(app.root, 'capsule', fMat, [midX + perpX * 2.45, 0.35, midZ + perpZ * 2.45], [0.95, 1.65, 0.95], [0, angleY, 90]);
+            addPrim(app.root, 'capsule', fMat, [midX - perpX * 2.45, 0.35, midZ - perpZ * 2.45], [0.95, 1.65, 0.95], [0, angleY, 90]);
+            // Subtle transverse mucosal crease across the path
+            addPrim(app.root, 'cylinder', foldMat1, [midX, 0.04, midZ], [0.28, 4.4, 0.12], [0, angleY, 90]);
+        }
+    }
+
+    // Spawn Portal at the Start of the S-Path
+    const startPt = PATH_POINTS[0];
+    addPrim(app.root, 'cylinder', getMat('#ef4444', '#dc2626'), [startPt.x, 0.15, startPt.z], [4.6, 0.3, 4.6]);
+
+    // End Castle at the end of the S-Path
+    const endPt = PATH_POINTS[PATH_POINTS.length - 1];
+    const castleGroup = new pc.Entity('EndCastle');
+    castleGroup.setPosition(endPt.x + 2.0, 0, endPt.z);
+    const stoneMat = getMat('#cbd5e1', null, 0.3);
+    const roofMat  = getMat('#2563eb', '#1d4ed8', 0.5);
+    const doorMat  = getMat('#451a03');
+
+    // Main Keep & 4 Corner Towers
+    addPrim(castleGroup, 'box', stoneMat, [0, 1.8, 0], [3.6, 3.6, 3.6]);
+    addPrim(castleGroup, 'box', doorMat,  [-1.82, 1.0, 0], [0.15, 2.0, 1.4]);
+    const towerOffsets = [[-1.7, -1.7], [1.7, -1.7], [-1.7, 1.7], [1.7, 1.7]];
+    towerOffsets.forEach(([tx, tz]) => {
+        addPrim(castleGroup, 'cylinder', stoneMat, [tx, 2.4, tz], [1.25, 4.8, 1.25]);
+        addPrim(castleGroup, 'cone', roofMat, [tx, 5.5, tz], [1.65, 1.8, 1.65]);
+    });
+    app.root.addChild(castleGroup);
+
+    // Build 8 Defense Nodes & Dynamic Player/Node Range Ring
+    const defenseNodes = [];
+    const nodeRingMat = getMat('#22d3ee', '#06b6d4', 0.8, 0.2, 0.65);
+    const nodeActiveMat = getMat('#4ade80', '#22c55e', 0.9, 0.2, 0.85);
+
+    DEFENSE_NODES_POS.forEach(n => {
+        const nodeEnt = new pc.Entity(`Node_${n.id}`);
+        nodeEnt.setPosition(n.x, 0.06, n.z);
+        const pad = addPrim(nodeEnt, 'cylinder', nodeRingMat, [0, 0, 0], [3.1, 0.12, 3.1]);
+        const inner = addPrim(nodeEnt, 'cylinder', getMat('#0f172a'), [0, 0.02, 0], [2.5, 0.13, 2.5]);
+        app.root.addChild(nodeEnt);
+
+        defenseNodes.push({
+            id: n.id,
+            x: n.x,
+            z: n.z,
+            entity: nodeEnt,
+            padMesh: pad,
+            towerType: null,
+            units: [], // Can hold multiple defense units when player buys '+1'
+            uiLabel: null
+        });
+    });
+
+    // Subtle Range Ring under Player so player sees the 1/3 screen width attack range
+    const rangeRingEntity = addPrim(app.root, 'cylinder', getMat('#10b981', '#059669', 0.2, 0, 0.14), [0, 0.03, 0], [20, 0.02, 20]);
+
+    /*************************************************************************
+     * 7. FLOATING 2D UI LABELS & DAMAGE POPUPS (Projected from 3D World)
+     *************************************************************************/
+    const worldUiContainer = document.getElementById('world-ui-container');
+
+    function createWorldLabel(htmlContent) {
+        const el = document.createElement('div');
+        el.className = 'entity-label';
+        el.innerHTML = htmlContent;
+        worldUiContainer.appendChild(el);
+        return el;
+    }
+
+    function updateWorldLabelPosition(el, worldPos, yOffset = 2.5) {
+        const pos = new pc.Vec3(worldPos.x, worldPos.y + yOffset, worldPos.z);
+        const screenPos = new pc.Vec3();
+        cameraEntity.camera.worldToScreen(pos, screenPos);
+        if (screenPos.z < 0) {
+            el.style.opacity = '0';
+        } else {
+            el.style.opacity = '1';
+            el.style.left = `${screenPos.x}px`;
+            el.style.top = `${screenPos.y}px`;
+        }
+    }
+
+    function spawnDamagePopup(worldPos, text, color = '#fde047') {
+        const pos = new pc.Vec3(worldPos.x, worldPos.y + 1.8, worldPos.z);
+        const screenPos = new pc.Vec3();
+        cameraEntity.camera.worldToScreen(pos, screenPos);
+        if (screenPos.z < 0) return;
+
+        const el = document.createElement('div');
+        el.className = 'dmg-popup';
+        el.style.left = `${screenPos.x + (Math.random() - 0.5) * 20}px`;
+        el.style.top = `${screenPos.y}px`;
+        el.style.color = color;
+        el.textContent = text;
+        worldUiContainer.appendChild(el);
+        setTimeout(() => el.remove(), 750);
+    }
+
+    /*************************************************************************
+     * 8. GAME STATE, PLAYER SURGEON, ENEMIES, TOWERS & PROJECTILES
+     *************************************************************************/
+    const playerModel = createSurgeonModel();
+    app.root.addChild(playerModel.root);
+
+    const playerLabelEl = createWorldLabel(`
+        <div class="bg-emerald-950/90 border border-emerald-400 px-2 py-0.5 rounded-md text-[11px] font-black text-emerald-300 shadow">
+            <span id="player-3d-tag">Tazocin</span>
+        </div>
+    `);
+
+    // Calculate 1/3 of visible screen width in 3D world space at Z=player.z
+    function getAttackRangeWorldUnits() {
+        const yZeroPlane = player.z;
+        const pLeft = new pc.Vec3();
+        const pRight = new pc.Vec3();
+        const camPos = cameraEntity.getPosition();
+        const farLeft = cameraEntity.camera.screenToWorld(0, canvas.clientHeight * 0.5, 30);
+        const farRight = cameraEntity.camera.screenToWorld(canvas.clientWidth, canvas.clientHeight * 0.5, 30);
+
+        // Ray intersect Y = 0 plane
+        const tL = -camPos.y / (farLeft.y - camPos.y);
+        pLeft.x = camPos.x + (farLeft.x - camPos.x) * tL;
+        const tR = -camPos.y / (farRight.y - camPos.y);
+        pRight.x = camPos.x + (farRight.x - camPos.x) * tR;
+
+        const visibleWorldWidth = Math.abs(pRight.x - pLeft.x);
+        return Math.max(8.5, Math.min(16.0, visibleWorldWidth / 3.0));
+    }
+
+    const player = {
+        x: 0,
+        z: -8,
+        speed: 11.5,
+        evoLevel: 0, // 0: Tazocin (0.625s), 1: Tygecycline (0.625s), 2: Tygecycline (0.375s) -> Slowed by 20%
+        attackCooldown: 0,
+        walkAnimTime: 0,
+        get drugName() {
+            return this.evoLevel === 0 ? 'Tazocin' : 'Tygecycline';
+        },
+        get attackInterval() {
+            // Original 0.3s / 0.5s slowed down by 20% (multiplied by 1.25 -> 0.375s / 0.625s)
+            return this.evoLevel === 2 ? 0.375 : 0.625;
+        }
+    };
+
+    const game = {
+        state: 'MENU', // 'MENU', 'PLAYING', 'STAGE_CLEAR', 'GAMEOVER'
+        level: 1,
+        gold: 5, // Starting gold so player can test or save
+        castleHp: 5,
+        totalKills: 0,
+        stageKills: 0,
+        pendingConfig: null,
+        spawnQueue: [],
+        spawnTimer: 0,
+        spawnInterval: 1.05,
+        enemySpeedMultiplier: 1.0,
+        allowedTowers: [],
+        canUpgradeMero: false,
+        enemies: [],
+        projectiles: [],
+        activeNode: null
+    };
+
+    /*************************************************************************
+     * 8.5 BOTTOM-LEFT 2D TACTICAL MINIMAP RENDERER
+     *************************************************************************/
+    const minimapCanvas = document.getElementById('minimap-canvas');
+    const minimapCtx = minimapCanvas.getContext('2d');
+
+    function worldToMinimap(wx, wz) {
+        const padX = 38;
+        const padZ = 27;
+        const nx = (wx + padX) / (padX * 2);
+        const nz = (wz + padZ) / (padZ * 2);
+        return {
+            x: nx * minimapCanvas.width,
+            y: (1 - nz) * minimapCanvas.height
+        };
+    }
+
+    function renderMinimap(currentRange) {
+        if (!minimapCtx) return;
+        const w = minimapCanvas.width;
+        const h = minimapCanvas.height;
+
+        // 1. Background & Arena Border
+        minimapCtx.fillStyle = '#1f0810';
+        minimapCtx.fillRect(0, 0, w, h);
+
+        const topLeft = worldToMinimap(-MAP_HALF_W, MAP_HALF_H);
+        const botRight = worldToMinimap(MAP_HALF_W, -MAP_HALF_H);
+        minimapCtx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
+        minimapCtx.lineWidth = 1;
+        minimapCtx.strokeRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
+
+        // 2. S-Shaped Colon Pathway (Outer mucosal border + Inner lumen)
+        if (PATH_POINTS.length > 1) {
+            minimapCtx.lineCap = 'round';
+            minimapCtx.lineJoin = 'round';
+
+            minimapCtx.beginPath();
+            PATH_POINTS.forEach((pt, idx) => {
+                const m = worldToMinimap(pt.x, pt.z);
+                if (idx === 0) minimapCtx.moveTo(m.x, m.y);
+                else minimapCtx.lineTo(m.x, m.y);
+            });
+            minimapCtx.strokeStyle = '#9f324d';
+            minimapCtx.lineWidth = 10;
+            minimapCtx.stroke();
+
+            minimapCtx.strokeStyle = '#591627';
+            minimapCtx.lineWidth = 6;
+            minimapCtx.stroke();
+        }
+
+        // 3. Spawn Point & End Castle
+        const startM = worldToMinimap(startPt.x, startPt.z);
+        minimapCtx.fillStyle = '#ef4444';
+        minimapCtx.beginPath();
+        minimapCtx.arc(startM.x, startM.y, 4.5, 0, Math.PI * 2);
+        minimapCtx.fill();
+
+        const castleM = worldToMinimap(endPt.x + 1.5, endPt.z);
+        minimapCtx.fillStyle = '#3b82f6';
+        minimapCtx.strokeStyle = '#93c5fd';
+        minimapCtx.lineWidth = 1.5;
+        minimapCtx.fillRect(castleM.x - 5, castleM.y - 5, 10, 10);
+        minimapCtx.strokeRect(castleM.x - 5, castleM.y - 5, 10, 10);
+
+        // 4. 8 Defense Build Nodes & Placed Guards (衛兵)
+        defenseNodes.forEach(node => {
+            const nm = worldToMinimap(node.x, node.z);
+            if (!node.towerType) {
+                // Empty build slot ring
+                minimapCtx.strokeStyle = 'rgba(34, 211, 238, 0.65)';
+                minimapCtx.lineWidth = 1.2;
+                minimapCtx.beginPath();
+                minimapCtx.arc(nm.x, nm.y, 3.8, 0, Math.PI * 2);
+                minimapCtx.stroke();
+            } else {
+                // Occupied by Guard(s)
+                const spec = TOWER_SPECS[node.towerType];
+                minimapCtx.fillStyle = spec ? spec.color : '#38bdf8';
+                minimapCtx.strokeStyle = '#ffffff';
+                minimapCtx.lineWidth = 1.2;
+                minimapCtx.beginPath();
+                minimapCtx.arc(nm.x, nm.y, 4.8, 0, Math.PI * 2);
+                minimapCtx.fill();
+                minimapCtx.stroke();
+
+                // Show unit count if reinforced (+1)
+                if (node.units.length > 1) {
+                    minimapCtx.fillStyle = '#fde047';
+                    minimapCtx.font = 'bold 8px sans-serif';
+                    minimapCtx.textAlign = 'center';
+                    minimapCtx.fillText(`x${node.units.length}`, nm.x, nm.y - 6);
+                }
+            }
+        });
+
+        // 5. Live Bacteria Positions
+        game.enemies.forEach(e => {
+            if (e.hp <= 0) return;
+            const em = worldToMinimap(e.x, e.z);
+            minimapCtx.beginPath();
+            minimapCtx.arc(em.x, em.y, 3.0, 0, Math.PI * 2);
+
+            if (e.type === 'entero') {
+                minimapCtx.fillStyle = '#ef4444';
+                minimapCtx.fill();
+            } else if (e.type === 'esbl') {
+                minimapCtx.fillStyle = '#ef4444';
+                minimapCtx.fill();
+                minimapCtx.strokeStyle = '#e2e8f0'; // Silver shield rim
+                minimapCtx.lineWidth = 1.5;
+                minimapCtx.stroke();
+            } else if (e.type === 'cre') {
+                minimapCtx.fillStyle = '#ef4444';
+                minimapCtx.fill();
+                minimapCtx.strokeStyle = '#facc15'; // Gold shield rim
+                minimapCtx.lineWidth = 1.5;
+                minimapCtx.stroke();
+            } else if (e.type === 'pseudo') {
+                minimapCtx.fillStyle = '#22c55e';
+                minimapCtx.fill();
+            } else if (e.type === 'candida') {
+                minimapCtx.fillStyle = '#ffffff';
+                minimapCtx.fill();
+            } else {
+                // enterococcus / anaerobe
+                minimapCtx.fillStyle = '#a855f7';
+                minimapCtx.fill();
+            }
+        });
+
+        // 6. Player (Surgeon) Position & Faint Attack Range Circle
+        const pm = worldToMinimap(player.x, player.z);
+        const rangePx = (currentRange / 76) * w;
+
+        minimapCtx.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+        minimapCtx.fillStyle = 'rgba(16, 185, 129, 0.08)';
+        minimapCtx.lineWidth = 1;
+        minimapCtx.beginPath();
+        minimapCtx.arc(pm.x, pm.y, rangePx, 0, Math.PI * 2);
+        minimapCtx.fill();
+        minimapCtx.stroke();
+
+        // Player dot
+        minimapCtx.fillStyle = player.evoLevel > 0 ? '#fbbf24' : '#10b981';
+        minimapCtx.strokeStyle = '#ffffff';
+        minimapCtx.lineWidth = 1.8;
+        minimapCtx.beginPath();
+        minimapCtx.arc(pm.x, pm.y, 4.8, 0, Math.PI * 2);
+        minimapCtx.fill();
+        minimapCtx.stroke();
+    }
+
+    // Reset Player Evolution & Clear Defense Nodes between stages
+    function resetPlayerEvolution() {
+        player.evoLevel = 0;
+        playerModel.tigerGroup.enabled = false;
+        playerModel.surgeonGroup.setLocalPosition(0, 0, 0);
+        document.getElementById('player-3d-tag').textContent = 'Tazocin';
+        document.getElementById('player-3d-tag').parentElement.className =
+            'bg-emerald-950/90 border border-emerald-400 px-2 py-0.5 rounded-md text-[11px] font-black text-emerald-300 shadow';
+        updatePlayerEvolutionUI();
+    }
+
+    function clearAllDefenseNodes() {
+        defenseNodes.forEach(node => {
+            node.units.forEach(u => {
+                if (u.beamEntity) u.beamEntity.destroy();
+                u.model.root.destroy();
+            });
+            node.units = [];
+            node.towerType = null;
+            if (node.uiLabel) {
+                node.uiLabel.remove();
+                node.uiLabel = null;
+            }
+        });
+    }
+
+    function clearAllEnemiesAndProjectiles() {
+        game.enemies.forEach(e => {
+            if (e.uiLabel) e.uiLabel.remove();
+            e.entity.destroy();
+        });
+        game.enemies = [];
+        game.projectiles.forEach(p => {
+            p.entity.destroy();
+        });
+        game.projectiles = [];
+    }
+
+    /*************************************************************************
+     * 9. STAGE MANAGEMENT & HUD UPDATES
+     *************************************************************************/
+    function prepareStageModal(level, isRetry = false, failedStage = 1) {
+        const cfg = getLevelConfig(level);
+        game.pendingConfig = cfg; // Lock in this stage's randomized wave so briefing matches gameplay
+        const modal = document.getElementById('modal-screen');
+        const badge = document.getElementById('modal-badge');
+        const title = document.getElementById('modal-title');
+        const desc = document.getElementById('modal-desc');
+        const enemyList = document.getElementById('modal-enemy-list');
+        const towerList = document.getElementById('modal-tower-list');
+        const startBtn = document.getElementById('btn-start-stage');
+        const killSummary = document.getElementById('modal-kill-summary');
+        const totalKillsEl = document.getElementById('modal-total-kills');
+        const stageKillsEl = document.getElementById('modal-stage-kills');
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
+        if (isRetry) {
+            badge.textContent = 'CASTLE COLLAPSED 城堡倒塌・遊戲結束';
+            badge.className = 'inline-block px-3 py-1 rounded-full bg-rose-500/20 border border-rose-400/40 text-rose-300 text-xs font-extrabold';
+            title.textContent = `作戰失敗 (止步於第 ${failedStage} 關)`;
+            desc.innerHTML = `有 5 隻細菌突破防線導致終點城堡崩塌！<br>請檢視下方戰果統計，重新部署再次挑戰！`;
+            startBtn.innerHTML = `<i class="fa-solid fa-rotate-right mr-1.5"></i> 重新開始第 1 關`;
+
+            killSummary.classList.remove('hidden');
+            totalKillsEl.textContent = game.totalKills;
+            stageKillsEl.textContent = `於第 ${failedStage} 關消滅了 ${game.stageKills} 隻細菌`;
+        } else if (level === 1) {
+            badge.textContent = '3D MEDICAL TOWER DEFENSE';
+            badge.className = 'inline-block px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-extrabold';
+            title.textContent = '抗生素塔防：腸道保衛戰';
+            desc.innerHTML = `扮演身穿綠色手術衣的外科醫師 <span class="text-emerald-400 font-bold">Tazocin</span>，在大腸皺摺路徑攔截細菌！<br>站在圓圈點位上可部署防禦人員，擊殺細菌獲得 1 金幣。`;
+            startBtn.innerHTML = `<i class="fa-solid fa-play mr-1.5"></i> 進入第 1 關`;
+            killSummary.classList.add('hidden');
+        } else {
+            badge.textContent = `STAGE ${level - 1} CLEARED 過關結算`;
+            badge.className = 'inline-block px-3 py-1 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-extrabold';
+            title.textContent = `準備進入 第 ${level} 關`;
+            desc.innerHTML = `過關後場地防禦與進化已重置，金幣保留一半 (最多40金)！<br>目前持有金幣：<span class="text-yellow-400 font-black">${game.gold} 金</span>`;
+            startBtn.innerHTML = `<i class="fa-solid fa-forward mr-1.5"></i> 開始第 ${level} 關`;
+
+            killSummary.classList.remove('hidden');
+            totalKillsEl.textContent = game.totalKills;
+            stageKillsEl.textContent = `上一關消滅細菌：${game.stageKills} 隻`;
+        }
+
+        // Format enemy summary
+        const eParts = Object.keys(cfg.counts).map(k => `${BACTERIA_INFO[k].name} x${cfg.counts[k]}`);
+        if (level >= 7) {
+            const pct = Math.round((cfg.speedMultiplier - 1) * 100);
+            eParts.push(`(共 ${cfg.queue.length} 隻 / 全體移速 +${pct}% [每關+5%])`);
+        }
+        enemyList.textContent = eParts.join(' 、 ');
+
+        // Format allowed defenses
+        if (cfg.allowed.length === 0) {
+            towerList.textContent = '本關僅能進化玩家角色 (不可放置防禦設施)';
+        } else {
+            let tNames = cfg.allowed.slice();
+            if (cfg.canUpgradeMero) tNames.push('Ertapenem 可升級 Meropenem');
+            towerList.textContent = tNames.join(' 、 ');
+        }
+    }
+
+    function startLevel(level) {
+        sfx.startBGM();
+        const cfg = game.pendingConfig || getLevelConfig(level);
+        game.pendingConfig = null;
+        if (level === 1) {
+            game.totalKills = 0;
+        }
+        game.stageKills = 0;
+        game.level = level;
+        game.state = 'PLAYING';
+        game.castleHp = 5;
+        game.spawnQueue = cfg.queue.slice();
+        game.spawnTimer = 0.5;
+        // Scale spawn rate slightly for large waves in later stages
+        game.spawnInterval = level >= 7 ? 0.36 : (level >= 4 ? 0.68 : 0.95);
+        game.enemySpeedMultiplier = cfg.speedMultiplier;
+        game.allowedTowers = cfg.allowed;
+        game.canUpgradeMero = cfg.canUpgradeMero;
+
+        clearAllEnemiesAndProjectiles();
+        clearAllDefenseNodes();
+        resetPlayerEvolution();
+
+        // Restore Castle position
+        castleGroup.setPosition(endPt.x + 2.0, 0, endPt.z);
+        castleGroup.setLocalEulerAngles(0, 0, 0);
+
+        // Place Player near center-left
+        player.x = -8;
+        player.z = -8;
+        playerModel.root.setPosition(player.x, 0, player.z);
+
+        document.getElementById('modal-screen').classList.add('hidden');
+        document.getElementById('modal-screen').classList.remove('flex');
+
+        updateTopHUD();
+        updatePlayerEvolutionUI();
+        showWaveBanner(`第 ${level} 關開始！細菌總數：${game.spawnQueue.length} 隻`);
+    }
+
+    function showWaveBanner(msg) {
+        const banner = document.getElementById('wave-banner');
+        document.getElementById('wave-banner-text').textContent = msg;
+        banner.classList.remove('opacity-0', 'scale-90');
+        banner.classList.add('opacity-100', 'scale-100');
+        setTimeout(() => {
+            banner.classList.remove('opacity-100', 'scale-100');
+            banner.classList.add('opacity-0', 'scale-90');
+        }, 3200);
+    }
+
+    function updateTopHUD() {
+        document.getElementById('hud-level').textContent = `第 ${game.level} 關`;
+        const remaining = game.spawnQueue.length + game.enemies.length;
+        document.getElementById('hud-enemies').textContent = `${remaining} 隻`;
+        document.getElementById('hud-kills').textContent = `${game.totalKills} 隻`;
+        document.getElementById('hud-gold').textContent = game.gold;
+
+        const heartsContainer = document.getElementById('hud-castle-hearts');
+        let heartsHtml = '';
+        for (let i = 0; i < 5; i++) {
+            if (i < game.castleHp) {
+                heartsHtml += `<i class="fa-solid fa-heart text-rose-500"></i>`;
+            } else {
+                heartsHtml += `<i class="fa-regular fa-heart text-slate-600"></i>`;
+            }
+        }
+        heartsContainer.innerHTML = heartsHtml;
+    }
+
+    function updatePlayerEvolutionUI() {
+        const statusName = document.getElementById('player-status-name');
+        const btn = document.getElementById('btn-evolve-player');
+        const title = document.getElementById('evolve-btn-title');
+        const cost = document.getElementById('evolve-btn-cost');
+
+        if (player.evoLevel === 0) {
+            statusName.textContent = 'Tazocin (0.62s/刀)';
+            title.textContent = '進化：騎虎 Tygecycline';
+            cost.textContent = '費用: 5 金幣';
+            btn.disabled = game.gold < 5;
+        } else if (player.evoLevel === 1) {
+            statusName.textContent = 'Tygecycline (0.62s/刀)';
+            title.textContent = '再進化：極速 Tygecycline';
+            cost.textContent = '費用: 10 金幣 (0.38秒/刀)';
+            btn.disabled = game.gold < 10;
+        } else {
+            statusName.textContent = 'Tygecycline MAX (0.38s/刀)';
+            title.textContent = '已達最高進化';
+            cost.textContent = '射速 0.38 秒 / 手術刀';
+            btn.disabled = true;
+        }
+    }
+
+    /*************************************************************************
+     * 10. PLAYER EVOLUTION & DEFENSE NODE CONTEXT MENU ACTIONS
+     *************************************************************************/
+    document.getElementById('btn-evolve-player').addEventListener('click', (e) => {
+        e.stopPropagation();
+        sfx.init();
+        if (game.state !== 'PLAYING') return;
+
+        if (player.evoLevel === 0 && game.gold >= 5) {
+            game.gold -= 5;
+            player.evoLevel = 1;
+            playerModel.tigerGroup.enabled = true;
+            playerModel.surgeonGroup.setLocalPosition(0, 0.75, -0.1);
+            document.getElementById('player-3d-tag').textContent = 'Tygecycline';
+            document.getElementById('player-3d-tag').parentElement.className =
+                'bg-amber-950/95 border border-amber-400 px-2 py-0.5 rounded-md text-[11px] font-black text-amber-300 shadow';
+            sfx.playUpgrade();
+            spawnDamagePopup(new pc.Vec3(player.x, 1.8, player.z), '進化 Tygecycline!', '#34d399');
+        } else if (player.evoLevel === 1 && game.gold >= 10) {
+            game.gold -= 10;
+            player.evoLevel = 2;
+            document.getElementById('player-3d-tag').textContent = 'Tygecycline MAX';
+            sfx.playUpgrade();
+            spawnDamagePopup(new pc.Vec3(player.x, 1.8, player.z), '射速提升 0.38s!', '#fde047');
+        }
+        updateTopHUD();
+        updatePlayerEvolutionUI();
+        refreshNodeMenuUI();
+    });
+
+    function addUnitToNode(node, type) {
+        const count = node.units.length;
+        const model = createDefenseUnitModel(type);
+        // Offset multiple units on the same node when +1 is bought
+        const angle = count * 2.1;
+        const radius = count === 0 ? 0 : 1.05;
+        const ux = node.x + Math.cos(angle) * radius;
+        const uz = node.z + Math.sin(angle) * radius;
+        model.root.setPosition(ux, 0, uz);
+        app.root.addChild(model.root);
+
+        // Create continuous water beam entity if Meropenem
+        let beamEntity = null;
+        if (type === 'Meropenem') {
+            beamEntity = addPrim(app.root, 'cylinder', getMat('#38bdf8', '#0284c7', 0.9, 0.1, 0.78), [ux, 1.45, uz], [0.28, 1.0, 0.28]);
+            beamEntity.enabled = false;
+        }
+
+        node.units.push({
+            type: type,
+            x: ux,
+            z: uz,
+            model: model,
+            cooldown: 0,
+            beamEntity: beamEntity
+        });
+        node.towerType = type;
+        updateNodeFloatingLabel(node);
+    }
+
+    function updateNodeFloatingLabel(node) {
+        if (!node.towerType) {
+            if (node.uiLabel) {
+                node.uiLabel.remove();
+                node.uiLabel = null;
+            }
+            return;
+        }
+        if (!node.uiLabel) {
+            node.uiLabel = createWorldLabel('');
+        }
+        const multText = node.units.length > 1 ? ` x${node.units.length}` : '';
+        node.uiLabel.innerHTML = `
+            <div class="bg-slate-900/90 border border-cyan-400/70 px-2 py-0.5 rounded text-[10px] font-black text-cyan-200 shadow">
+                ${node.towerType}${multText}
+            </div>
+        `;
+    }
+
+    function refreshNodeMenuUI() {
+        const panel = document.getElementById('node-menu-panel');
+        const titleEl = document.getElementById('node-menu-title');
+        const btnsContainer = document.getElementById('node-menu-buttons');
+
+        if (!game.activeNode || game.state !== 'PLAYING') {
+            panel.classList.add('hidden');
+            return;
+        }
+
+        const node = game.activeNode;
+        panel.classList.remove('hidden');
+        btnsContainer.innerHTML = '';
+
+        if (!node.towerType) {
+            titleEl.textContent = `防禦點位 #${node.id} - 建造防禦人員`;
+            if (game.allowedTowers.length === 0) {
+                btnsContainer.innerHTML = `
+                    <div class="col-span-2 text-xs text-amber-300 py-1 font-bold">
+                        第 1 關無法配置防禦人員，請點擊下方按鈕進化外科醫師！
+                    </div>
+                `;
+                return;
+            }
+            game.allowedTowers.forEach(tKey => {
+                const spec = TOWER_SPECS[tKey];
+                const btn = document.createElement('button');
+                btn.className = 'game-btn bg-slate-800 hover:bg-slate-700 border border-cyan-500/50 rounded-xl p-2 text-left flex flex-col justify-between';
+                btn.disabled = game.gold < spec.cost;
+                btn.innerHTML = `
+                    <div class="flex items-center justify-between w-full">
+                        <span class="font-black text-xs text-white">${spec.name}</span>
+                        <span class="text-[11px] font-extrabold text-yellow-400">${spec.cost}金</span>
+                    </div>
+                    <span class="text-[10px] text-slate-300 mt-0.5">${spec.desc}</span>
+                `;
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (game.gold >= spec.cost && !node.towerType) {
+                        game.gold -= spec.cost;
+                        addUnitToNode(node, tKey);
+                        sfx.playUpgrade();
+                        updateTopHUD();
+                        updatePlayerEvolutionUI();
+                        refreshNodeMenuUI();
+                    }
+                });
+                btnsContainer.appendChild(btn);
+            });
+        } else {
+            titleEl.textContent = `點位 #${node.id}: ${node.towerType} (${node.units.length}人)`;
+
+            // Option 1: Upgrade Ertapenem -> Meropenem (10 Gold) if allowed in level
+            if (node.towerType === 'Ertapenem' && game.canUpgradeMero) {
+                const upgBtn = document.createElement('button');
+                upgBtn.className = 'game-btn bg-blue-700 hover:bg-blue-600 border border-blue-300/60 rounded-xl p-2 text-left flex flex-col';
+                upgBtn.disabled = game.gold < 10;
+                upgBtn.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <span class="font-black text-xs text-white">升級 Meropenem</span>
+                        <span class="text-[11px] font-black text-yellow-300">10金</span>
+                    </div>
+                    <span class="text-[10px] text-blue-100">消防員連續強力水柱</span>
+                `;
+                upgBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (game.gold >= 10) {
+                        game.gold -= 10;
+                        const count = node.units.length;
+                        node.units.forEach(u => {
+                            if (u.beamEntity) u.beamEntity.destroy();
+                            u.model.root.destroy();
+                        });
+                        node.units = [];
+                        for (let i = 0; i < count; i++) {
+                            addUnitToNode(node, 'Meropenem');
+                        }
+                        sfx.playUpgrade();
+                        updateTopHUD();
+                        updatePlayerEvolutionUI();
+                        refreshNodeMenuUI();
+                    }
+                });
+                btnsContainer.appendChild(upgBtn);
+            }
+
+            // Option 2: +1 Additional Defense Unit on the same node (15 Gold)
+            const plusBtn = document.createElement('button');
+            plusBtn.className = 'game-btn bg-emerald-700 hover:bg-emerald-600 border border-emerald-300/60 rounded-xl p-2 text-left flex flex-col';
+            plusBtn.disabled = game.gold < 15;
+            plusBtn.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <span class="font-black text-xs text-white">+1 增援防禦</span>
+                    <span class="text-[11px] font-black text-yellow-300">15金</span>
+                </div>
+                <span class="text-[10px] text-emerald-100">身旁多出一隻 ${node.towerType}</span>
+            `;
+            plusBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (game.gold >= 15) {
+                    game.gold -= 15;
+                    addUnitToNode(node, node.towerType);
+                    sfx.playUpgrade();
+                    updateTopHUD();
+                    updatePlayerEvolutionUI();
+                    refreshNodeMenuUI();
+                }
+            });
+            btnsContainer.appendChild(plusBtn);
+
+            // Option 3: Demolish & Refund +3 Gold
+            const demoBtn = document.createElement('button');
+            demoBtn.className = 'game-btn bg-rose-800 hover:bg-rose-700 border border-rose-400/60 rounded-xl p-2 text-left flex flex-col';
+            demoBtn.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <span class="font-black text-xs text-white"><i class="fa-solid fa-trash-can mr-1"></i>拆除設施</span>
+                    <span class="text-[11px] font-black text-emerald-300">+3金</span>
+                </div>
+                <span class="text-[10px] text-rose-200">清空點位並回收 3 金幣</span>
+            `;
+            demoBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                node.units.forEach(u => {
+                    if (u.beamEntity) u.beamEntity.destroy();
+                    u.model.root.destroy();
+                });
+                node.units = [];
+                node.towerType = null;
+                updateNodeFloatingLabel(node);
+                game.gold += 3;
+                sfx.playKillCoin();
+                updateTopHUD();
+                updatePlayerEvolutionUI();
+                refreshNodeMenuUI();
+            });
+            btnsContainer.appendChild(demoBtn);
+        }
+    }
+
+    /*************************************************************************
+     * 11. SPAWNING ENEMIES, PROJECTILES & TARGETING LOGIC
+     *************************************************************************/
+    function spawnBacterium(type) {
+        const entity = createBacteriumModel(type);
+        const start = PATH_POINTS[0];
+        entity.setPosition(start.x, 0, start.z);
+        app.root.addChild(entity);
+
+        const info = BACTERIA_INFO[type];
+        const uiLabel = createWorldLabel(`
+            <div class="flex flex-col items-center">
+                <span class="text-[10px] font-bold px-1 rounded bg-black/70 text-white mb-0.5">${info.name}</span>
+                <div class="w-11 h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/30">
+                    <div class="hp-bar-fill h-full bg-rose-500 transition-all duration-100" style="width: 100%;"></div>
+                </div>
+            </div>
+        `);
+
+        game.enemies.push({
+            type: type,
+            hp: 100,
+            maxHp: 100,
+            x: start.x,
+            z: start.z,
+            waypointIdx: 1,
+            baseSpeed: 3.7 * game.enemySpeedMultiplier,
+            entity: entity,
+            uiLabel: uiLabel,
+            hpFillEl: uiLabel.querySelector('.hp-bar-fill'),
+            walkPhase: Math.random() * 10
+        });
+        updateTopHUD();
+    }
+
+    // Find closest valid enemy within range that this antibiotic can damage (damage > 0)
+    function findTargetForUnit(unitX, unitZ, drugKey, maxRange) {
+        const dmgTable = DAMAGE_MATRIX[drugKey];
+        if (!dmgTable) return null;
+
+        let bestEnemy = null;
+        let bestDistSq = maxRange * maxRange;
+
+        for (let i = 0; i < game.enemies.length; i++) {
+            const e = game.enemies[i];
+            if (e.hp <= 0) continue;
+            const dmg = dmgTable[e.type] || 0;
+            if (dmg <= 0) continue; // Strictly ignore enemies we cannot damage!
+
+            const dx = e.x - unitX;
+            const dz = e.z - unitZ;
+            const dSq = dx * dx + dz * dz;
+            if (dSq <= bestDistSq) {
+                bestDistSq = dSq;
+                bestEnemy = e;
+            }
+        }
+        return bestEnemy;
+    }
+
+    // Rotate 3D entity so its +Z front (and weapon barrel/hose) faces the target bacterium
+    function faceEntityTowards(entity, fromX, fromZ, targetX, targetZ) {
+        const dx = targetX - fromX;
+        const dz = targetZ - fromZ;
+        const angleDeg = Math.atan2(dx, dz) * (180 / Math.PI);
+        entity.setLocalEulerAngles(0, angleDeg, 0);
+    }
+
+    function spawnProjectile(fromPos, targetEnemy, damage, projType) {
+        const pEnt = new pc.Entity('Projectile');
+        pEnt.setPosition(fromPos.x, fromPos.y, fromPos.z);
+
+        if (projType === 'scalpel') {
+            // 3D Surgical Scalpel (Silver blade + teal handle)
+            addPrim(pEnt, 'box', getMat('#e2e8f0', '#94a3b8', 0.9, 0.9), [0, 0, 0.2], [0.08, 0.05, 0.45]);
+            addPrim(pEnt, 'box', getMat('#10b981'), [0, 0, -0.15], [0.1, 0.07, 0.35]);
+            sfx.playScalpel();
+        } else if (projType === 'baseball') {
+            addPrim(pEnt, 'sphere', getMat('#ffffff', '#e2e8f0'), [0, 0, 0], [0.28, 0.28, 0.28]);
+            sfx.playBaseball();
+        } else if (projType === 'arrow') {
+            addPrim(pEnt, 'cylinder', getMat('#f59e0b', '#d97706'), [0, 0, 0], [0.06, 0.85, 0.06], [90, 0, 0]);
+            sfx.playArrow();
+        } else if (projType === 'sniper') {
+            addPrim(pEnt, 'cylinder', getMat('#fde047', '#facc15'), [0, 0, 0], [0.1, 1.1, 0.1], [90, 0, 0]);
+            sfx.playSniper();
+        } else if (projType === 'fireball') {
+            addPrim(pEnt, 'sphere', getMat('#f97316', '#ef4444'), [0, 0, 0], [0.48, 0.48, 0.48]);
+            sfx.playFireball();
+        }
+
+        app.root.addChild(pEnt);
+        game.projectiles.push({
+            entity: pEnt,
+            x: fromPos.x,
+            y: fromPos.y,
+            z: fromPos.z,
+            target: targetEnemy,
+            damage: damage,
+            speed: projType === 'sniper' ? 38 : 22,
+            projType: projType
+        });
+    }
+
+    function applyDamageToEnemy(enemy, damage, isContinuous = false) {
+        if (enemy.hp <= 0) return;
+        enemy.hp -= damage;
+
+        const pct = Math.max(0, Math.min(100, (enemy.hp / enemy.maxHp) * 100));
+        enemy.hpFillEl.style.width = `${pct}%`;
+
+        if (!isContinuous) {
+            spawnDamagePopup(new pc.Vec3(enemy.x, 1.4, enemy.z), `-${Math.round(damage)}`, '#fde047');
+        }
+
+        if (enemy.hp <= 0) {
+            // Enemy killed -> +1 Gold & +1 Kill Count
+            game.gold += 1;
+            game.totalKills += 1;
+            game.stageKills += 1;
+            sfx.playKillCoin();
+            spawnDamagePopup(new pc.Vec3(enemy.x, 2.0, enemy.z), '+1 金幣', '#4ade80');
+            if (enemy.uiLabel) enemy.uiLabel.remove();
+            enemy.entity.destroy();
+            const idx = game.enemies.indexOf(enemy);
+            if (idx !== -1) game.enemies.splice(idx, 1);
+
+            updateTopHUD();
+            updatePlayerEvolutionUI();
+            refreshNodeMenuUI();
+        }
+    }
+
+    /*************************************************************************
+     * 12. DESKTOP KEYBOARD (WASD) & MOBILE TOUCH-SLIDE CONTROLS
+     *************************************************************************/
+    const keys = {};
+    window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+    window.addEventListener('keyup',   (e) => { keys[e.code] = false; });
+
+    const touchInput = {
+        active: false,
+        id: null,
+        startX: 0,
+        startY: 0,
+        dx: 0,
+        dy: 0
+    };
+
+    const joystickZone = document.getElementById('joystick-zone');
+    const joystickBase = document.getElementById('joystick-base');
+    const joystickStick = document.getElementById('joystick-stick');
+
+    joystickZone.addEventListener('pointerdown', (e) => {
+        sfx.init();
+        if (touchInput.active) return;
+        touchInput.active = true;
+        touchInput.id = e.pointerId;
+        touchInput.startX = e.clientX;
+        touchInput.startY = e.clientY;
+        touchInput.dx = 0;
+        touchInput.dy = 0;
+
+        joystickBase.style.display = 'block';
+        joystickStick.style.display = 'block';
+        joystickBase.style.left = `${e.clientX}px`;
+        joystickBase.style.top = `${e.clientY}px`;
+        joystickStick.style.left = `${e.clientX}px`;
+        joystickStick.style.top = `${e.clientY}px`;
+    });
+
+    window.addEventListener('pointermove', (e) => {
+        if (!touchInput.active || e.pointerId !== touchInput.id) return;
+        const rawDx = e.clientX - touchInput.startX;
+        const rawDy = e.clientY - touchInput.startY;
+        const dist = Math.hypot(rawDx, rawDy);
+        const maxRadius = 48;
+        const clampedDist = Math.min(dist, maxRadius);
+        const angle = Math.atan2(rawDy, rawDx);
+
+        const stickX = touchInput.startX + Math.cos(angle) * clampedDist;
+        const stickY = touchInput.startY + Math.sin(angle) * clampedDist;
+        joystickStick.style.left = `${stickX}px`;
+        joystickStick.style.top = `${stickY}px`;
+
+        if (dist > 6) {
+            touchInput.dx = Math.cos(angle) * (clampedDist / maxRadius);
+            touchInput.dy = Math.sin(angle) * (clampedDist / maxRadius);
+        } else {
+            touchInput.dx = 0;
+            touchInput.dy = 0;
+        }
+    });
+
+    function endTouch(e) {
+        if (touchInput.active && e.pointerId === touchInput.id) {
+            touchInput.active = false;
+            touchInput.dx = 0;
+            touchInput.dy = 0;
+            joystickBase.style.display = 'none';
+            joystickStick.style.display = 'none';
+        }
+    }
+    window.addEventListener('pointerup', endTouch);
+    window.addEventListener('pointercancel', endTouch);
+
+    /*************************************************************************
+     * 13. UI BUTTON HANDLERS (Modals & Audio)
+     *************************************************************************/
+    document.getElementById('btn-start-stage').addEventListener('click', () => {
+        sfx.init();
+        startLevel(game.level);
+    });
+
+    document.getElementById('btn-open-guide').addEventListener('click', () => {
+        document.getElementById('modal-guide').classList.remove('hidden');
+        document.getElementById('modal-guide').classList.add('flex');
+    });
+
+    document.getElementById('btn-close-guide').addEventListener('click', () => {
+        document.getElementById('modal-guide').classList.add('hidden');
+        document.getElementById('modal-guide').classList.remove('flex');
+    });
+
+    document.getElementById('btn-toggle-audio').addEventListener('click', () => {
+        sfx.init();
+        const isMuted = sfx.toggleMute();
+        const icon = document.getElementById('icon-audio');
+        icon.className = isMuted ? 'fa-solid fa-volume-xmark text-rose-400' : 'fa-solid fa-volume-high text-emerald-400';
+    });
+
+    /*************************************************************************
+     * 14. MAIN PLAYCANVAS GAME LOOP (app.on('update'))
+     *************************************************************************/
+    let meropenemTickAccum = 0;
+
+    app.on('update', (dt) => {
+        if (game.state !== 'PLAYING') {
+            // Keep floating label & minimap synced even on menu
+            updateWorldLabelPosition(playerLabelEl, new pc.Vec3(player.x, 0, player.z), player.evoLevel > 0 ? 4.3 : 3.4);
+            renderMinimap(getAttackRangeWorldUnits());
+            return;
+        }
+
+        const currentRange = getAttackRangeWorldUnits();
+        rangeRingEntity.setLocalScale(currentRange * 2, 0.02, currentRange * 2);
+
+        // 1. Player Movement (WASD / Arrow Keys / Mobile Touch Drag)
+        let moveX = 0;
+        let moveZ = 0;
+        if (keys['KeyW'] || keys['ArrowUp'])    moveZ += 1;
+        if (keys['KeyS'] || keys['ArrowDown'])  moveZ -= 1;
+        if (keys['KeyA'] || keys['ArrowLeft'])  moveX += 1;
+        if (keys['KeyD'] || keys['ArrowRight']) moveX -= 1;
+
+        if (touchInput.active) {
+            // Camera looks from -Z toward +Z, so screen right is -X and screen up is +Z
+            moveX = -touchInput.dx;
+            moveZ = -touchInput.dy;
+        }
+
+        const moveLen = Math.hypot(moveX, moveZ);
+        if (moveLen > 0.01) {
+            const nx = moveX / Math.max(1, moveLen);
+            const nz = moveZ / Math.max(1, moveLen);
+            const speedBoost = player.evoLevel > 0 ? 1.2 : 1.0;
+            player.x = Math.max(-MAP_HALF_W, Math.min(MAP_HALF_W, player.x + nx * player.speed * speedBoost * dt));
+            player.z = Math.max(-MAP_HALF_H, Math.min(MAP_HALF_H, player.z + nz * player.speed * speedBoost * dt));
+
+            // Walking leg animation
+            player.walkAnimTime += dt * 12;
+            const swing = Math.sin(player.walkAnimTime) * 28;
+            playerModel.sLegL.setLocalEulerAngles(swing, 0, 0);
+            playerModel.sLegR.setLocalEulerAngles(-swing, 0, 0);
+            playerModel.tLegs.forEach((leg, i) => {
+                leg.setLocalEulerAngles(i % 2 === 0 ? swing : -swing, 0, 0);
+            });
+
+            // Face movement direction by default (will be overridden if actively attacking an enemy)
+            faceEntityTowards(playerModel.visualGroup, player.x, player.z, player.x + nx, player.z + nz);
+        }
+
+        playerModel.root.setPosition(player.x, 0, player.z);
+        rangeRingEntity.setPosition(player.x, 0.03, player.z);
+
+        // Smooth Fixed-Angle Camera Follow (clamped somewhat so battlefield edges feel natural)
+        const targetCamX = Math.max(-20, Math.min(20, player.x));
+        const targetCamZ = Math.max(-14, Math.min(14, player.z)) + CAM_OFFSET.z;
+        const curCam = cameraEntity.getPosition();
+        cameraEntity.setPosition(
+            curCam.x + (targetCamX - curCam.x) * Math.min(1, dt * 7),
+            CAM_OFFSET.y,
+            curCam.z + (targetCamZ - curCam.z) * Math.min(1, dt * 7)
+        );
+        cameraEntity.lookAt(curCam.x, 0, curCam.z - CAM_OFFSET.z);
+
+        // 2. Check if Player is standing on any of the 8 Defense Nodes
+        let foundNode = null;
+        for (let i = 0; i < defenseNodes.length; i++) {
+            const n = defenseNodes[i];
+            const d = Math.hypot(player.x - n.x, player.z - n.z);
+            if (d <= 2.5) {
+                foundNode = n;
+                n.padMesh.render.material = nodeActiveMat;
+            } else {
+                n.padMesh.render.material = nodeRingMat;
+            }
+            if (n.uiLabel) {
+                updateWorldLabelPosition(n.uiLabel, new pc.Vec3(n.x, 0, n.z), 3.6);
+            }
+        }
+        if (foundNode !== game.activeNode) {
+            game.activeNode = foundNode;
+            refreshNodeMenuUI();
+        }
+
+        // 3. Player Surgeon Auto-Targeting & Scalpel Attack
+        player.attackCooldown -= dt;
+        const playerTarget = findTargetForUnit(player.x, player.z, player.drugName, currentRange);
+        if (playerTarget) {
+            // Always face the target bacterium when attacking!
+            faceEntityTowards(playerModel.visualGroup, player.x, player.z, playerTarget.x, playerTarget.z);
+            if (player.attackCooldown <= 0) {
+                player.attackCooldown = player.attackInterval;
+                const dmg = DAMAGE_MATRIX[player.drugName][playerTarget.type];
+                const muzzlePos = playerModel.rightArm.getPosition();
+                spawnProjectile(muzzlePos, playerTarget, dmg, 'scalpel');
+            }
+        }
+        updateWorldLabelPosition(playerLabelEl, new pc.Vec3(player.x, 0, player.z), player.evoLevel > 0 ? 4.3 : 3.4);
+
+        // 4. Defense Units Targeting, Orientation & Firing
+        meropenemTickAccum += dt;
+        const showBeamPopup = meropenemTickAccum >= 0.44;
+        if (showBeamPopup) meropenemTickAccum = 0;
+
+        defenseNodes.forEach(node => {
+            node.units.forEach(unit => {
+                const target = findTargetForUnit(unit.x, unit.z, unit.type, currentRange);
+                if (unit.type === 'Meropenem') {
+                    // Continuous Water Stream Hose (Attack speed slowed by 20% -> 0.8x tick rate)
+                    if (target) {
+                        faceEntityTowards(unit.model.root, unit.x, unit.z, target.x, target.z);
+                        const nozzlePos = unit.model.weaponMuzzle.getPosition();
+                        const dx = target.x - nozzlePos.x;
+                        const dz = target.z - nozzlePos.z;
+                        const dist = Math.hypot(dx, dz);
+                        const angleDeg = Math.atan2(dx, dz) * (180 / Math.PI);
+
+                        unit.beamEntity.enabled = true;
+                        unit.beamEntity.setPosition(nozzlePos.x + dx * 0.5, 1.35, nozzlePos.z + dz * 0.5);
+                        unit.beamEntity.setLocalScale(0.28, dist, 0.28);
+                        unit.beamEntity.setLocalEulerAngles(90, angleDeg, 0);
+
+                        const baseDps = DAMAGE_MATRIX.Meropenem[target.type] || 0;
+                        const slowedDps = baseDps * 0.8; // Slowed down by 20%
+                        applyDamageToEnemy(target, slowedDps * dt, true);
+                        if (showBeamPopup) {
+                            spawnDamagePopup(new pc.Vec3(target.x, 1.3, target.z), `-${Math.round(slowedDps * 0.44)}`, '#38bdf8');
+                        }
+                    } else if (unit.beamEntity) {
+                        unit.beamEntity.enabled = false;
+                    }
+                } else {
+                    // Projectile-based Defense Units (Ertapenem, Ciprofloxacin, Zavicefta, Erasix)
+                    unit.cooldown -= dt;
+                    if (target) {
+                        faceEntityTowards(unit.model.root, unit.x, unit.z, target.x, target.z);
+                        if (unit.cooldown <= 0) {
+                            const spec = TOWER_SPECS[unit.type];
+                            unit.cooldown = spec.interval;
+                            const dmg = DAMAGE_MATRIX[unit.type][target.type];
+                            const muzzlePos = unit.model.weaponMuzzle.getPosition();
+                            let pType = 'baseball';
+                            if (unit.type === 'Ciprofloxacin') pType = 'arrow';
+                            else if (unit.type === 'Zavicefta') pType = 'sniper';
+                            else if (unit.type === 'Erasix') pType = 'fireball';
+                            spawnProjectile(muzzlePos, target, dmg, pType);
+                        }
+                    }
+                }
+            });
+        });
+
+        // 5. Update Flying Projectiles
+        for (let i = game.projectiles.length - 1; i >= 0; i--) {
+            const p = game.projectiles[i];
+            if (!p.target || p.target.hp <= 0) {
+                p.entity.destroy();
+                game.projectiles.splice(i, 1);
+                continue;
+            }
+            const tx = p.target.x;
+            const ty = 1.0;
+            const tz = p.target.z;
+            const dx = tx - p.x;
+            const dy = ty - p.y;
+            const dz = tz - p.z;
+            const dist = Math.hypot(dx, dy, dz);
+
+            if (dist <= p.speed * dt + 0.35) {
+                applyDamageToEnemy(p.target, p.damage, false);
+                p.entity.destroy();
+                game.projectiles.splice(i, 1);
+            } else {
+                p.x += (dx / dist) * p.speed * dt;
+                p.y += (dy / dist) * p.speed * dt;
+                p.z += (dz / dist) * p.speed * dt;
+                p.entity.setPosition(p.x, p.y, p.z);
+                faceEntityTowards(p.entity, p.x, p.z, tx, tz);
+            }
+        }
+
+        // 6. Spawn Bacteria Wave
+        if (game.spawnQueue.length > 0) {
+            game.spawnTimer -= dt;
+            if (game.spawnTimer <= 0) {
+                game.spawnTimer = game.spawnInterval;
+                const nextType = game.spawnQueue.shift();
+                spawnBacterium(nextType);
+            }
+        }
+
+        // 7. Move Bacteria Along the S-Shaped Path (Pass right through Player & Units)
+        for (let i = game.enemies.length - 1; i >= 0; i--) {
+            const e = game.enemies[i];
+            const targetPt = PATH_POINTS[e.waypointIdx];
+            const dx = targetPt.x - e.x;
+            const dz = targetPt.z - e.z;
+            const dist = Math.hypot(dx, dz);
+
+            if (dist <= e.baseSpeed * dt) {
+                e.x = targetPt.x;
+                e.z = targetPt.z;
+                e.waypointIdx++;
+                if (e.waypointIdx >= PATH_POINTS.length) {
+                    // Reached the End Castle!
+                    if (e.uiLabel) e.uiLabel.remove();
+                    e.entity.destroy();
+                    game.enemies.splice(i, 1);
+                    game.castleHp--;
+                    sfx.playCastleHit();
+                    updateTopHUD();
+
+                    // Shake/Tilt Castle
+                    castleGroup.setLocalEulerAngles(0, 0, (5 - game.castleHp) * 3);
+
+                    if (game.castleHp <= 0) {
+                        // Castle Collapses -> Game Over
+                        const failedStage = game.level;
+                        castleGroup.setPosition(endPt.x + 2.0, -2.2, endPt.z);
+                        castleGroup.setLocalEulerAngles(25, 0, 35);
+                        game.state = 'GAMEOVER';
+                        game.level = 1;
+                        game.gold = 5;
+                        renderMinimap(currentRange);
+                        setTimeout(() => prepareStageModal(1, true, failedStage), 600);
+                        return;
+                    }
+                    continue;
+                }
+            } else {
+                e.x += (dx / dist) * e.baseSpeed * dt;
+                e.z += (dz / dist) * e.baseSpeed * dt;
+                faceEntityTowards(e.entity, e.x, e.z, targetPt.x, targetPt.z);
+            }
+
+            // Cute wiggling walk bounce for anthropomorphic bacteria
+            e.walkPhase += dt * 10;
+            const bounceY = Math.abs(Math.sin(e.walkPhase)) * 0.18;
+            e.entity.setPosition(e.x, bounceY, e.z);
+            updateWorldLabelPosition(e.uiLabel, new pc.Vec3(e.x, bounceY, e.z), 2.15);
+        }
+
+        // Update Real-Time Bottom-Left Minimap
+        renderMinimap(currentRange);
+
+        // 8. Check Stage Clear Condition
+        if (game.spawnQueue.length === 0 && game.enemies.length === 0 && game.castleHp > 0) {
+            game.state = 'STAGE_CLEAR';
+            sfx.playUpgrade();
+            // Carry over half of current gold, capped at max 40 gold
+            game.gold = Math.min(40, Math.floor(game.gold / 2));
+            // Give a minimum of 5 gold if they enter level 2 with 0 so they aren't stuck
+            if (game.level === 1 && game.gold < 5) game.gold = Math.max(game.gold, 5);
+            game.level += 1;
+            clearAllDefenseNodes();
+            resetPlayerEvolution();
+            updateTopHUD();
+            setTimeout(() => prepareStageModal(game.level, false), 500);
+        }
+    });
+
+    // Start PlayCanvas Engine & Show Stage 1 Briefing
+    window.onload = function () {
+        app.start();
+        prepareStageModal(1, false);
+    };
+    </script>
+</body>
+</html>
